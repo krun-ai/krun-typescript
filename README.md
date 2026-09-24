@@ -335,8 +335,7 @@ One-time setup before the first release:
   `npm`). npm only allows this on a package that already exists, so the very first `0.1.0` publish may have to be
   done once by hand (`npm publish --access public`) or with a short-lived granular token.
 - Create the `npm` environment in the GitHub repo settings.
-- Add a LICENSE.
 
 ## License
 
-**Pending decision.** No license has been chosen yet, so do not redistribute until a `LICENSE` file is added.
+[Apache License 2.0](LICENSE).
