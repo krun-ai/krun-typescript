@@ -1,0 +1,65 @@
+{
+  "name": "@krun-ai/sdk",
+  "version": "0.1.0",
+  "description": "Official TypeScript SDK for the Krun API.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "!src/**/*.test.ts",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "vitest run",
+    "test:live": "KRUN_LIVE_TESTS=1 vitest run test/live.test.ts",
+    "generate:openapi": "openapi-typescript openapi/openapi.json -o src/generated/openapi.ts && biome format --write src/generated/openapi.ts",
+    "check:openapi": "node scripts/check-openapi.mjs",
+    "smoke": "npm run build && node scripts/smoke.mjs",
+    "bench": "npm run build && node scripts/bench.mjs",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm test && npm run build"
+  },
+  "keywords": [
+    "krun",
+    "decisions",
+    "classification",
+    "routing",
+    "llm",
+    "sdk"
+  ],
+  "homepage": "https://krun.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/krun-ai/krun-typescript.git"
+  },
+  "bugs": "https://github.com/krun-ai/krun-typescript/issues",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@types/node": "20.19.43",
+    "ajv": "8.20.0",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}

@@ -1,0 +1,42 @@
+name: Publish to npm
+
+# Runs when a GitHub Release is published (tag vX.Y.Z). Uses npm Trusted Publishing (OIDC) with provenance: no
+# npm token is stored. One-time setup: create the `krun-ai` npm org, publish once so the package exists, then add
+# this repo / workflow `publish.yml` / environment `npm` as a trusted publisher in the package settings.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@krun-ai/sdk
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm >= 11.5.1.
+      - run: npm install -g npm@latest
+      - name: Tag must match the package version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          sdk_version=$(node -p "require('fs').readFileSync('src/version.ts','utf8').match(/\"(.+)\"/)[1]")
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != v$version"; exit 1; }
+          test "$version" = "$sdk_version" || { echo "package.json $version != src/version.ts $sdk_version"; exit 1; }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm pack --dry-run
+      - run: npm publish --access public --provenance
