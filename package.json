@@ -1,6 +1,6 @@
 {
   "name": "@krun-ai/sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Official TypeScript SDK for the Krun API.",
   "license": "Apache-2.0",
   "type": "module",
@@ -53,7 +53,7 @@
   "bugs": "https://github.com/krun-ai/krun-typescript/issues",
   "publishConfig": {
     "access": "public",
-    "provenance": true
+    "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

@@ -10,14 +10,17 @@ import { APIResponseValidationError } from "./errors.js";
 import type { components } from "./generated/openapi.js";
 import type {
   AbstentionStatus,
+  Answer,
   ChoiceAnswer,
   DecideParams,
   DecisionResult,
   Feedback,
   FeedbackParams,
   Model,
+  NoulAnswer,
   Question,
   Questions,
+  ScoreAnswer,
 } from "./types.js";
 
 type Schemas = components["schemas"];
@@ -37,9 +40,10 @@ function questionToWire(id: string, question: Question): WireQuestion {
   if (!isPlainObject(question)) {
     throw new TypeError(`questions[${JSON.stringify(id)}] must be an object like { type: "choice", options: {...} }`);
   }
-  const { taskType, ...rest } = question as Question & Record<string, unknown>;
+  const { taskType, ...rest } = question as Question & { taskType?: "intent" | "tool" | null };
   const wire = { ...rest } as WireQuestion & Record<string, unknown>;
   if (taskType !== undefined) wire.task_type = taskType;
+  if (Array.isArray(wire.levels)) wire.levels = [...wire.levels]; // order is semantic: copied as is
   return wire;
 }
 
@@ -61,13 +65,19 @@ export function decideBody(params: DecideParams): WireDecideRequest {
 
 export function feedbackBody(params: FeedbackParams): WireFeedbackRequest {
   if (!isPlainObject(params)) throw new TypeError("feedback() expects { requestId, questionId, correct }");
-  const { requestId, questionId, correct, expectedDecision, metadata } = params;
+  const { requestId, questionId, correct, expected, expectedDecision, metadata } = params;
   if (typeof requestId !== "string" || requestId === "") {
     throw new TypeError("requestId must be a non-empty string (DecisionResult.requestId)");
   }
   if (typeof questionId !== "string" || questionId === "") throw new TypeError("questionId must be a non-empty string");
   if (typeof correct !== "boolean") throw new TypeError(`correct must be a boolean, got ${typeof correct}`);
   const body: WireFeedbackRequest = { request_id: requestId, question_id: questionId, correct };
+  if (expected !== undefined && expected !== null) {
+    if (!isPlainObject(expected) || !["choice", "noul", "score"].includes(String(expected.type))) {
+      throw new TypeError('expected must be { type: "choice" | "noul" | "score", value }');
+    }
+    body.expected = { type: expected.type, value: expected.value } as NonNullable<WireFeedbackRequest["expected"]>;
+  }
   if (expectedDecision !== undefined && expectedDecision !== null) body.expected_decision = expectedDecision;
   if (metadata !== undefined && metadata !== null) {
     if (!isPlainObject(metadata)) throw new TypeError("metadata must be a plain object");
@@ -116,22 +126,50 @@ function choiceAnswer(data: Record<string, unknown>, where: string): ChoiceAnswe
   };
 }
 
-// Answer parsers by `type`. Future question types register here once the API supports them.
-const ANSWER_PARSERS: Record<Schemas["QuestionType"], (data: Record<string, unknown>, where: string) => ChoiceAnswer> =
-  { choice: choiceAnswer };
+function numberMap(value: unknown, where: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(obj(value, where))) out[k] = num(v, `${where}[${JSON.stringify(k)}]`);
+  return out;
+}
+
+function noulAnswer(data: Record<string, unknown>, where: string): NoulAnswer {
+  return { type: "noul", noul: num(data.noul, `${where}.noul`) };
+}
+
+function scoreAnswer(data: Record<string, unknown>, where: string): ScoreAnswer {
+  const legend: Record<string, string> = {};
+  for (const [k, v] of Object.entries(obj(data.legend, `${where}.legend`))) {
+    if (typeof v !== "string") throw fail(`${where}.legend[${JSON.stringify(k)}] is not a string`);
+    legend[k] = v;
+  }
+  return {
+    type: "score",
+    score: num(data.score, `${where}.score`),
+    confidence: num(data.confidence, `${where}.confidence`),
+    legend,
+    probabilities: numberMap(data.probabilities, `${where}.probabilities`),
+  };
+}
+
+// Answer parsers by `type`. A type this SDK does not know throws APIResponseValidationError ("please upgrade").
+const ANSWER_PARSERS: Record<Schemas["Answer"]["type"], (data: Record<string, unknown>, where: string) => Answer> = {
+  choice: choiceAnswer,
+  noul: noulAnswer,
+  score: scoreAnswer,
+};
 
 export const SUPPORTED_ANSWER_TYPES: readonly string[] = Object.keys(ANSWER_PARSERS);
 
 export function parseDecision<Q extends Questions>(data: unknown, requestId: string): DecisionResult<Q> {
   const body = obj(data, "body");
-  const answers: Record<string, ChoiceAnswer> = {};
+  const answers: Record<string, Answer> = {};
   for (const [id, raw] of Object.entries(obj(body.answers, "answers"))) {
     const where = `answers[${JSON.stringify(id)}]`;
     const answer = obj(raw, where);
     const kind = answer.type;
     const parser =
       typeof kind === "string" && Object.hasOwn(ANSWER_PARSERS, kind)
-        ? ANSWER_PARSERS[kind as Schemas["QuestionType"]]
+        ? ANSWER_PARSERS[kind as Schemas["Answer"]["type"]]
         : undefined;
     if (!parser)
       throw fail(`${where}.type ${JSON.stringify(kind)} is not supported by this SDK version; please upgrade`);

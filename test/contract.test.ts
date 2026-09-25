@@ -38,18 +38,40 @@ describe("OpenAPI snapshot", () => {
     expect(props("ErrorDetail")).toEqual(["code", "message", "request_id"]);
   });
 
+  const variant = (union: string, tag: string): string => {
+    const ref: string = SCHEMAS[union].discriminator.mapping[tag];
+    const name = ref.split("/").pop() as string;
+    expect(SCHEMAS[union].oneOf).toContainEqual({ $ref: ref });
+    expect(SCHEMAS[name].properties.type.enum).toEqual([tag]);
+    expect(SCHEMAS[name].required).toContain("type");
+    return name;
+  };
+
   it("agrees on answers, usage and question types", () => {
-    expect(props("Answer").map(camel).sort()).toEqual(
+    expect(Object.keys(SCHEMAS.Answer.discriminator.mapping)).toEqual(SUPPORTED_ANSWER_TYPES);
+    expect(Object.keys(SCHEMAS.Question.discriminator.mapping)).toEqual(["choice", "noul", "score"]);
+    expect(props(variant("Answer", "choice")).map(camel).sort()).toEqual(
       ["abstain", "abstentionStatus", "choice", "confidence", "probabilities", "type"].sort(),
     );
-    expect(SCHEMAS.Answer.required).not.toContain("choice");
-    expect(SCHEMAS.QuestionType.enum).toEqual(SUPPORTED_ANSWER_TYPES);
+    expect(SCHEMAS.ChoiceAnswer.required).not.toContain("choice");
+    expect(props(variant("Answer", "noul"))).toEqual(["noul", "type"]);
+    expect(props(variant("Answer", "score"))).toEqual(["confidence", "legend", "probabilities", "score", "type"]);
     expect(SCHEMAS.AbstentionStatus.enum).toEqual(["calibrated", "advisory"]);
     expect(SCHEMAS.TaskType.enum).toEqual(["intent", "tool"]);
     expect(props("Usage")).toEqual(["input_tokens"]);
-    expect(props("Question")).toEqual(["options", "task_type", "type"]);
+    expect(props(variant("Question", "choice"))).toEqual(["options", "task_type", "type"]);
+    expect(props(variant("Question", "noul"))).toEqual(["criteria", "instructions", "type"]);
+    expect(props(variant("Question", "score"))).toEqual(["instructions", "levels", "type"]);
+    expect(props("NoulCriteria")).toEqual(["false", "true"]);
     expect(props("DecideRequest")).toEqual(["context", "model", "questions"]);
-    expect(props("FeedbackRequest")).toEqual(["correct", "expected_decision", "metadata", "question_id", "request_id"]);
+    expect(props("FeedbackRequest")).toEqual([
+      "correct",
+      "expected",
+      "expected_decision",
+      "metadata",
+      "question_id",
+      "request_id",
+    ]);
     expect(props("FeedbackResponse")).toEqual(["created_at", "id", "object", "question_id", "request_id"]);
     expect(props("Model")).toEqual(["id", "object", "status"]);
   });
@@ -63,6 +85,8 @@ describe("serialized requests validate against the schema", () => {
       questions: {
         a: { type: "choice", options: { x: "", y: null } },
         b: { type: "choice", options: { x: "desc", y: "desc" }, taskType: "tool" },
+        c: { type: "noul", instructions: "Is it?", criteria: { true: "yes" } },
+        d: { type: "score", instructions: "How much?", levels: ["low", "mid", "high"] },
       },
       model: "krun-one-v0",
     });
@@ -74,6 +98,8 @@ describe("serialized requests validate against the schema", () => {
     for (const body of [
       feedbackBody({ requestId: "req_1", questionId: "a", correct: false, expectedDecision: "y", metadata: { k: 1 } }),
       feedbackBody({ requestId: "req_1", questionId: "a", correct: true }),
+      feedbackBody({ requestId: "req_1", questionId: "c", correct: false, expected: { type: "noul", value: true } }),
+      feedbackBody({ requestId: "req_1", questionId: "d", correct: false, expected: { type: "score", value: 2 } }),
     ]) {
       expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
     }
@@ -107,7 +133,8 @@ describe("OpenAPI examples", () => {
     expect(result.usage.inputTokens).toBe(value.usage.input_tokens);
     for (const [id, a] of Object.entries(value.answers as Record<string, Record<string, unknown>>)) {
       const { abstention_status, ...rest } = a;
-      expect((result.answers as Record<string, unknown>)[id]).toEqual({ ...rest, abstentionStatus: abstention_status });
+      const expected = abstention_status === undefined ? rest : { ...rest, abstentionStatus: abstention_status };
+      expect((result.answers as Record<string, unknown>)[id]).toEqual(expected);
     }
   });
 });

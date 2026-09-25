@@ -95,9 +95,15 @@ export interface components {
     schemas: {
         /** @enum {string} */
         AbstentionStatus: "calibrated" | "advisory";
-        Answer: {
-            /** @description Always `choice`. */
-            type: components["schemas"]["QuestionType"];
+        /** @description An answer, discriminated by `type` (same type as its question). */
+        Answer: components["schemas"]["ChoiceAnswer"] | components["schemas"]["NoulAnswer"] | components["schemas"]["ScoreAnswer"];
+        /** @description Answer to a `choice` question. */
+        ChoiceAnswer: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "choice";
             /** @description Selected option id, or `null` when the model abstains (the best guess is still visible in `probabilities`). */
             choice?: string | null;
             /**
@@ -117,14 +123,33 @@ export interface components {
              */
             abstention_status: components["schemas"]["AbstentionStatus"];
         };
+        /** @description Pick one of the given options. */
+        ChoiceQuestion: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "choice";
+            /**
+             * @description Option id → description (2–64 options). Ids are returned as-is in `choice` and `probabilities`. Use `""`
+             *     (or `null`) for label-only options.
+             */
+            options: {
+                [key: string]: string | null;
+            };
+            task_type?: components["schemas"]["TaskType"] | null;
+        };
         DecideRequest: {
             /** @description The text to decide on (1–8,000 characters). */
             context: string;
-            /** @description Question id → question (1–16). Question ids (1–100 characters) are returned as keys of `answers`. */
+            /**
+             * @description Question id → question (1–16). Question ids (1–100 characters) are returned as keys of `answers`. Questions of
+             *     different types can be mixed in one request.
+             */
             questions: {
                 [key: string]: components["schemas"]["Question"];
             };
-            /** @description Optional; defaults to `krun-one-v0` (the only model available). */
+            /** @description Optional model id (see `GET /v1/models`); defaults to the current model. */
             model?: string | null;
         };
         /** @description Decision response. The request id is returned in the `X-Request-ID` header. */
@@ -140,7 +165,7 @@ export interface components {
             error: components["schemas"]["ErrorDetail"];
         };
         /** @enum {string} */
-        ErrorCode: "INVALID_REQUEST" | "INVALID_OPTIONS" | "PAYLOAD_TOO_LARGE" | "UNAUTHORIZED" | "NOT_FOUND" | "RATE_LIMITED" | "QUOTA_EXCEEDED" | "UPSTREAM_TIMEOUT" | "UPSTREAM_UNAVAILABLE" | "INFERENCE_FAILED" | "INTERNAL_ERROR";
+        ErrorCode: "INVALID_REQUEST" | "INVALID_OPTIONS" | "PAYLOAD_TOO_LARGE" | "UNAUTHORIZED" | "FORBIDDEN" | "SIGNUP_RESTRICTED" | "NOT_FOUND" | "CONFLICT" | "INSUFFICIENT_CREDITS" | "RATE_LIMITED" | "QUOTA_EXCEEDED" | "UPSTREAM_TIMEOUT" | "UPSTREAM_UNAVAILABLE" | "INFERENCE_FAILED" | "INTERNAL_ERROR";
         ErrorDetail: {
             /** @description Stable machine-readable code. */
             code: components["schemas"]["ErrorCode"];
@@ -148,12 +173,35 @@ export interface components {
             /** @example req_0b7f7c5e9a3d4a8c9f1e2d3c4b5a6978 */
             request_id?: string | null;
         };
+        /** @description The answer that should have been given, typed like the question (KRUN-011). */
+        ExpectedAnswer: {
+            /** @description The option id that should have been chosen (1–200 characters). */
+            value: string;
+            /** @enum {string} */
+            type: "choice";
+        } | {
+            /** @description Whether the proposition actually holds. */
+            value: boolean;
+            /** @enum {string} */
+            type: "noul";
+        } | {
+            /**
+             * Format: int32
+             * @description The correct level index (0 = first level).
+             */
+            value: number;
+            /** @enum {string} */
+            type: "score";
+        };
         /**
          * @example {
          *       "request_id": "req_0b7f7c5e9a3d4a8c9f1e2d3c4b5a6978",
-         *       "question_id": "department",
+         *       "question_id": "needs_human",
          *       "correct": false,
-         *       "expected_decision": "billing"
+         *       "expected": {
+         *         "type": "noul",
+         *         "value": true
+         *       }
          *     }
          */
         FeedbackRequest: {
@@ -166,7 +214,11 @@ export interface components {
             question_id: string;
             /** @description Whether the decision was right. */
             correct: boolean;
-            /** @description The option id that should have been chosen for that question (≤ 200 characters). */
+            expected?: components["schemas"]["ExpectedAnswer"] | null;
+            /**
+             * @description Choice only, kept for compatibility: the option id that should have been chosen (≤ 200 characters). Same as
+             *     `expected: {"type": "choice", "value": ...}`; if both are sent they must agree.
+             */
             expected_decision?: string | null;
             /** @description Optional JSON object (≤ 8 KiB serialized). Do not put personal data here. */
             metadata?: Record<string, never> | null;
@@ -198,19 +250,84 @@ export interface components {
             object: string;
             data: components["schemas"]["Model"][];
         };
-        Question: {
-            type: components["schemas"]["QuestionType"];
+        /** @description Answer to a `noul` question. */
+        NoulAnswer: {
             /**
-             * @description Option id → description (2–64 options). Ids are returned as-is in `choice` and `probabilities`. Use `""`
-             *     (or `null`) for label-only options.
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
              */
-            options: {
-                [key: string]: string | null;
-            };
-            task_type?: components["schemas"]["TaskType"] | null;
+            type: "noul";
+            /**
+             * Format: double
+             * @description Probability that the proposition holds, in [0, 1] (0 = clearly false, 0.5 = uncertain, 1 = clearly true).
+             */
+            noul: number;
         };
-        /** @enum {string} */
-        QuestionType: "choice";
+        /** @description Optional texts describing when a `noul` proposition is true / false (either may be omitted). */
+        NoulCriteria: {
+            /** @description What makes the proposition true (1–500 characters). */
+            true?: string | null;
+            /** @description What makes the proposition false (1–500 characters). */
+            false?: string | null;
+        };
+        /** @description Probability that a yes/no proposition about the context holds. */
+        NoulQuestion: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "noul";
+            /**
+             * @description The proposition, phrased as a yes/no question (1–1,000 characters), e.g. "Is the customer asking to speak
+             *     with a human?".
+             */
+            instructions: string;
+            criteria?: components["schemas"]["NoulCriteria"] | null;
+        };
+        /** @description A question, discriminated by `type`. */
+        Question: components["schemas"]["ChoiceQuestion"] | components["schemas"]["NoulQuestion"] | components["schemas"]["ScoreQuestion"];
+        /** @description Answer to a `score` question. */
+        ScoreAnswer: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "score";
+            /**
+             * Format: double
+             * @description Expected level Σ index × probability, in [0, levels − 1] (not the most likely level).
+             */
+            score: number;
+            /**
+             * Format: double
+             * @description Concentration of the distribution, in [0, 1]: 1 − variance / maximum variance of the level index. 1 = all
+             *     probability on one level; 0 = split between the lowest and the highest level.
+             */
+            confidence: number;
+            /** @description Level index ("0", "1", ...) → the level text from the request. */
+            legend: {
+                [key: string]: string;
+            };
+            /** @description Level index → calibrated probability, in level order. */
+            probabilities: {
+                [key: string]: number;
+            };
+        };
+        /** @description Rate the context on ORDERED levels. Level order is semantic: index 0 is the lowest level. */
+        ScoreQuestion: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "score";
+            /** @description What to rate (1–1,000 characters), e.g. "How severe is the reported issue?". */
+            instructions: string;
+            /**
+             * @description 2–16 level descriptions, lowest first (1–500 characters each). Prefer descriptive levels
+             *     ("Blocking issue; no workaround") over bare numbers.
+             */
+            levels: string[];
+        };
         /** @enum {string} */
         TaskType: "intent" | "tool";
         Usage: {
@@ -292,7 +409,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description One answer per question. Request id in the `X-Request-ID` header. */
+            /** @description One answer per question, typed like its question (`choice`, `noul`, `score`). Request id in the `X-Request-ID` header. */
             200: {
                 headers: {
                     [name: string]: unknown;

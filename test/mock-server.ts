@@ -40,7 +40,13 @@ export interface Recorded {
   body: unknown;
 }
 
-type WireQuestion = { type: string; options: Record<string, string | null>; task_type?: string | null };
+type WireQuestion = {
+  type: string;
+  options: Record<string, string | null>;
+  task_type?: string | null;
+  instructions?: string;
+  levels?: string[];
+};
 
 export class MockKrunAPI {
   readonly requests: Recorded[] = [];
@@ -129,6 +135,27 @@ export class MockKrunAPI {
       const answers: Record<string, unknown> = {};
       let tokens = 0;
       for (const [qid, q] of Object.entries(b.questions)) {
+        if (q.type === "noul") {
+          answers[qid] = { type: "noul", noul: b.context.includes("unsure") ? 0.25 : 0.973 };
+          tokens += 12 + b.context.split(/\s+/).length;
+          continue;
+        }
+        if (q.type === "score") {
+          const levels = q.levels ?? [];
+          if (levels.length < 2 || levels.length > 16) {
+            return this.error(400, "INVALID_REQUEST", `questions.${qid}: ${levels.length} levels given`, rid);
+          }
+          const probabilities: Record<string, number> = {};
+          const legend: Record<string, string> = {};
+          levels.forEach((lv, i) => {
+            probabilities[String(i)] = 1 / levels.length;
+            legend[String(i)] = lv;
+          });
+          const score = levels.reduce((acc, _lv, i) => acc + i / levels.length, 0);
+          answers[qid] = { type: "score", score, confidence: 0.25, legend, probabilities };
+          tokens += 12 + b.context.split(/\s+/).length + 3 * levels.length;
+          continue;
+        }
         const options = Object.keys(q.options);
         if (options.length < 2 || options.length > 64) {
           const msg = `questions.${qid}: ${options.length} options given; between 2 and 64 are required`;

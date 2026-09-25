@@ -5,7 +5,10 @@
  *     ├── APIError                    the API answered with an error status
  *     │   ├── InvalidRequestError     400/413  INVALID_REQUEST, INVALID_OPTIONS, PAYLOAD_TOO_LARGE
  *     │   ├── AuthenticationError     401      UNAUTHORIZED
+ *     │   ├── InsufficientCreditsError 402     INSUFFICIENT_CREDITS
+ *     │   ├── PermissionDeniedError   403      FORBIDDEN, SIGNUP_RESTRICTED
  *     │   ├── NotFoundError           404      NOT_FOUND
+ *     │   ├── ConflictError           409      CONFLICT
  *     │   ├── RateLimitError          429      RATE_LIMITED
  *     │   ├── QuotaExceededError      429      QUOTA_EXCEEDED
  *     │   ├── InferenceFailedError    502      INFERENCE_FAILED
@@ -76,6 +79,12 @@ export class InvalidRequestError extends APIError {}
 export class AuthenticationError extends APIError {}
 /** Unknown resource, e.g. feedback for a `requestId` this project never decided. */
 export class NotFoundError extends APIError {}
+/** The organization has no credits left (402). Retrying will not help until credits are added. */
+export class InsufficientCreditsError extends APIError {}
+/** The key is valid but not allowed to do this (FORBIDDEN, SIGNUP_RESTRICTED). */
+export class PermissionDeniedError extends APIError {}
+/** The request conflicts with the current state of a resource. */
+export class ConflictError extends APIError {}
 /** Per-key requests-per-minute limit reached. `retryAfter` says when the window resets. */
 export class RateLimitError extends APIError {}
 /** The project's monthly decision or input-token quota is exhausted. Retrying will not help. */
@@ -105,6 +114,10 @@ export const CODE_TO_CLASS: Record<ErrorCode, APIErrorClass> = {
   PAYLOAD_TOO_LARGE: InvalidRequestError,
   UNAUTHORIZED: AuthenticationError,
   NOT_FOUND: NotFoundError,
+  FORBIDDEN: PermissionDeniedError,
+  SIGNUP_RESTRICTED: PermissionDeniedError,
+  CONFLICT: ConflictError,
+  INSUFFICIENT_CREDITS: InsufficientCreditsError,
   RATE_LIMITED: RateLimitError,
   QUOTA_EXCEEDED: QuotaExceededError,
   INFERENCE_FAILED: InferenceFailedError,
@@ -117,7 +130,10 @@ export const CODE_TO_CLASS: Record<ErrorCode, APIErrorClass> = {
 const STATUS_TO_CLASS: Record<number, APIErrorClass> = {
   400: InvalidRequestError,
   401: AuthenticationError,
+  402: InsufficientCreditsError,
+  403: PermissionDeniedError,
   404: NotFoundError,
+  409: ConflictError,
   413: InvalidRequestError,
   422: InvalidRequestError,
   429: RateLimitError,

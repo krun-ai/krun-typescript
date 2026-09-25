@@ -6,12 +6,12 @@ Official TypeScript SDK for the Krun API.
 npm install @krun-ai/sdk
 ```
 
-> **Not published yet.** `@krun-ai/sdk` is ready but not on npm (the `krun-ai` npm scope still has to be created).
+> **Not published yet.** Until the first release is available on npm, use a local checkout.
 > Until it is published, build from a checkout:
 >
 > ```bash
 > git clone https://github.com/krun-ai/krun-typescript.git && cd krun-typescript
-> npm ci && npm run build && npm pack      # then: npm install ./krun-ai-sdk-0.1.0.tgz
+> npm ci && npm run build && npm pack      # then: npm install ./krun-ai-sdk-0.2.0.tgz
 > ```
 
 - ESM only, Node.js 20+ (uses the built-in `fetch`; no runtime dependencies)
@@ -55,11 +55,13 @@ When `questions` is written inline, TypeScript infers the ids. `result.answers.d
 
 ## Reading an answer
 
-Every question gets one `ChoiceAnswer`:
+Every question gets one answer of its own type — `ChoiceAnswer`, `NoulAnswer` or `ScoreAnswer` (see
+[Decision primitives](#decision-primitives)). With an inline `questions` object each answer is typed statically;
+otherwise narrow with `answer.type`. A `ChoiceAnswer`:
 
 | field | type | meaning |
 |---|---|---|
-| `type` | `"choice"` | question type (the only type today) |
+| `type` | `"choice"` | question type |
 | `choice` | `OptionId \| null` | selected option id, **`null` when `abstain` is true** |
 | `confidence` | `number` | **top-1 probability − top-2 probability**, in [0, 1] |
 | `probabilities` | `Record<OptionId, number>` | calibrated probability per option id, keys exactly as sent, in request order |
@@ -142,19 +144,65 @@ result.answers.tool.choice;           // "calendar_search"
 result.answers.tool.abstentionStatus; // "advisory": tool abstention is a hint, keep your own fallback
 ```
 
+## Decision primitives
+
+Three question types, which can be mixed in one call (one question = one decision for billing and quota):
+
+| type | use when | returns |
+|---|---|---|
+| `choice` | pick one of several alternatives | `choice` + `probabilities` |
+| `noul` | evaluate a yes/no proposition | `noul`: probability in [0, 1] |
+| `score` | rate on ordered levels | `score` (expected level) + `probabilities` per level |
+
+```ts
+const result = await client.decide({
+  context: "Customer says this is the third time exports failed and wants a human immediately.",
+  questions: {
+    department: { type: "choice", options: { billing: "", support: "", sales: "" } },
+    needs_human: {
+      type: "noul",
+      instructions: "Is the customer asking to speak with a human?",
+      criteria: { true: "Explicitly requests a person" }, // optional
+    },
+    severity: {
+      type: "score",
+      instructions: "How severe is the reported issue?",
+      levels: ["Minor issue", "Feature degraded", "Blocking issue"], // lowest first; order is meaning
+    },
+  },
+});
+
+result.answers.needs_human.noul;           // 0.973: typed as NoulAnswer
+result.answers.severity.score;             // 1.43 = Σ index × probability (not the most likely level)
+result.answers.severity.probabilities;     // { "0": 0.0, "1": 0.57, "2": 0.43 }
+result.answers.severity.legend;            // { "0": "Minor issue", "1": "Feature degraded", "2": "Blocking issue" }
+
+for (const answer of Object.values(result.answers)) {
+  if (answer.type === "score") console.log(answer.confidence); // narrowed to ScoreAnswer
+}
+```
+
+- **noul**: `instructions` is the proposition phrased as a yes/no question; `criteria` (`true` / `false`) is optional.
+  `noul` is a probability, so it has no separate confidence. It is well calibrated on the kinds of propositions Krun
+  was evaluated on, but not guaranteed for every domain — validate the threshold you act on with your own data.
+- **score**: 2–16 `levels`, lowest first; prefer descriptive levels over bare numbers. `confidence` = 1 − variance /
+  maximum variance of the level index (1 = one level, 0 = split between the extremes).
+
 ## Feedback
 
-Tell Krun whether an answer was right. `questionId` is always required:
+Tell Krun whether an answer was right. `questionId` is always required. `expected` is typed like the question:
 
 ```ts
 await client.feedback({
   requestId: result.requestId,
-  questionId: "department",
+  questionId: "needs_human",
   correct: false,
-  expectedDecision: "billing",
+  expected: { type: "noul", value: false }, // or { type: "score", value: 2 }, { type: "choice", value: "billing" }
   metadata: { ticket: "T-1234" }, // optional JSON object, ≤ 8 KiB; no personal data
 });
 ```
+
+`expectedDecision: "billing"` (choice only) is still accepted.
 
 Feedback for a `requestId` this project never decided throws `NotFoundError`.
 
@@ -221,7 +269,10 @@ KrunError
 ├── APIError                     the API answered with an error (statusCode always set)
 │   ├── InvalidRequestError      400/413  INVALID_REQUEST, INVALID_OPTIONS, PAYLOAD_TOO_LARGE
 │   ├── AuthenticationError      401      UNAUTHORIZED
+│   ├── InsufficientCreditsError 402      INSUFFICIENT_CREDITS
+│   ├── PermissionDeniedError    403      FORBIDDEN, SIGNUP_RESTRICTED
 │   ├── NotFoundError            404      NOT_FOUND
+│   ├── ConflictError            409      CONFLICT
 │   ├── RateLimitError           429      RATE_LIMITED       (.retryAfter)
 │   ├── QuotaExceededError       429      QUOTA_EXCEEDED
 │   ├── InferenceFailedError     502      INFERENCE_FAILED
@@ -264,8 +315,8 @@ Wrong argument types (e.g. `context: null` from untyped code) throw `TypeError` 
 
 ## Examples
 
-[`examples/`](examples/): `basic-decision.ts`, `multiple-questions.ts`, `tool-routing.ts`, `feedback.ts`,
-`error-handling.ts`.
+[`examples/`](examples/): `basic-decision.ts`, `multiple-questions.ts`, `decision-primitives.ts`, `tool-routing.ts`,
+`feedback.ts`, `error-handling.ts`.
 
 ```bash
 npm run build
@@ -328,12 +379,36 @@ Release flow (not yet executed):
 4. `.github/workflows/publish.yml` runs on the release. It checks that the tag matches the package version, runs
    the checks, and publishes with **npm Trusted Publishing** (OIDC, with provenance, no stored token).
 
-One-time setup before the first release:
+### Manual local publication
 
-- Create the `krun-ai` npm organization.
+Validate the release without publishing:
+
+```bash
+npm run build
+npm pack --dry-run
+npm publish --dry-run --access public --registry=https://registry.npmjs.org/
+```
+
+The publish dry-run also runs `prepublishOnly` (lint, typecheck, tests and build). Inspect the tarball listing:
+it should contain `dist`, `src` (for source maps), package metadata, README, CHANGELOG and LICENSE, with no
+tests, credentials or local artifacts. `npm pack` does not run `prepublishOnly`, so build before packing.
+
+Once validation passes, publish manually from the package root using your local npm login:
+
+```bash
+npm publish --access public --registry=https://registry.npmjs.org/
+```
+
+Local publication does not enable provenance. Never commit npm tokens or credentials, including in `.npmrc`.
+Enable provenance only in CI with OIDC; the existing GitHub Actions release workflow already uses
+`id-token: write` and `npm publish --access public --provenance`. Do not enable it in `publishConfig` or a
+project `.npmrc`. See the [npm provenance documentation](https://docs.npmjs.com/generating-provenance-statements/).
+Dry-runs do not verify registry permissions, 2FA or organization publishing policies.
+
+One-time CI setup after the first manual publication:
+
 - Configure the trusted publisher on npmjs.com (repo `krun-ai/krun-typescript`, workflow `publish.yml`, environment
-  `npm`). npm only allows this on a package that already exists, so the very first `0.1.0` publish may have to be
-  done once by hand (`npm publish --access public`) or with a short-lived granular token.
+  `npm`) on the existing package.
 - Create the `npm` environment in the GitHub repo settings.
 
 ## License
