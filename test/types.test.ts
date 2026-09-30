@@ -6,6 +6,7 @@ import type {
   ChoiceAnswer,
   DecisionResult,
   Krun,
+  MultiAnswer,
   NoulAnswer,
   Questions,
   ScoreAnswer,
@@ -64,9 +65,35 @@ describe("type inference", () => {
     const describe = (answer: Answer): number | string | null => {
       if (answer.type === "score") return answer.score;
       if (answer.type === "noul") return answer.noul;
+      if (answer.type === "multi") return answer.values.join(",");
       return answer.choice;
     };
     expectTypeOf(describe).returns.toEqualTypeOf<number | string | null>();
+  });
+
+  it("types multi answers and accepts content-part contexts (Krun One V1)", () => {
+    const pending = () =>
+      client.decide({
+        context: [
+          { type: "text", text: "Which apply?" },
+          { type: "image", assetId: "asset_img00000001", id: "photo" },
+          { type: "document", assetId: "asset_doc00000001" },
+          { type: "audio", assetId: "asset_aud00000001" },
+        ],
+        questions: { tags: { type: "multi", options: { logo: null, stamp: "" }, instructions: "Select all" } },
+      });
+    type Result = Awaited<ReturnType<typeof pending>>;
+    expectTypeOf<Result["answers"]["tags"]>().toEqualTypeOf<MultiAnswer<"logo" | "stamp">>();
+    expectTypeOf<Result["answers"]["tags"]["values"]>().toEqualTypeOf<("logo" | "stamp")[]>();
+    const reject = () => {
+      // @ts-expect-error: media parts need an assetId
+      void client.decide({ context: [{ type: "image" }], questions: {} });
+      // @ts-expect-error: video is not a content part
+      void client.decide({ context: [{ type: "video", assetId: "asset_x0000000" }], questions: {} });
+      // @ts-expect-error: text parts take text, not an asset
+      void client.decide({ context: [{ type: "text", assetId: "asset_x0000000" }], questions: {} });
+    };
+    void reject;
   });
 
   it("exposes only input tokens", () => {

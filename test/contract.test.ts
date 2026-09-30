@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { OPENAPI_SHA256, OPENAPI_VERSION } from "../src/constants.js";
 import { CODE_TO_CLASS } from "../src/errors.js";
 import { Krun } from "../src/index.js";
-import { decideBody, feedbackBody, SUPPORTED_ANSWER_TYPES } from "../src/wire.js";
+import { decideBody, feedbackBody, parseAsset, SUPPORTED_ANSWER_TYPES } from "../src/wire.js";
 import { canonicalSha256 } from "./canonical.js";
 import { OPENAPI, schemaValidator } from "./mock-server.js";
 
@@ -31,6 +31,9 @@ describe("OpenAPI snapshot", () => {
     expect(OPENAPI.paths["/v1/feedback"].post).toBeDefined();
     expect(OPENAPI.paths["/v1/models"].get).toBeDefined();
     expect(DECIDE.parameters.map((p: { name: string }) => p.name)).toContain("X-Request-ID");
+    expect(OPENAPI.paths["/v1/assets"].post).toBeDefined();
+    expect(OPENAPI.paths["/v1/assets/{asset_id}"].get).toBeDefined();
+    expect(OPENAPI.paths["/v1/assets/{asset_id}"].delete).toBeDefined();
   });
 
   it("maps every error code", () => {
@@ -48,8 +51,8 @@ describe("OpenAPI snapshot", () => {
   };
 
   it("agrees on answers, usage and question types", () => {
-    expect(Object.keys(SCHEMAS.Answer.discriminator.mapping)).toEqual(SUPPORTED_ANSWER_TYPES);
-    expect(Object.keys(SCHEMAS.Question.discriminator.mapping)).toEqual(["choice", "noul", "score"]);
+    expect(Object.keys(SCHEMAS.Answer.discriminator.mapping).sort()).toEqual([...SUPPORTED_ANSWER_TYPES].sort());
+    expect(Object.keys(SCHEMAS.Question.discriminator.mapping).sort()).toEqual(["choice", "multi", "noul", "score"]);
     expect(props(variant("Answer", "choice")).map(camel).sort()).toEqual(
       ["abstain", "abstentionStatus", "choice", "confidence", "probabilities", "type"].sort(),
     );
@@ -62,6 +65,8 @@ describe("OpenAPI snapshot", () => {
     expect(props(variant("Question", "choice"))).toEqual(["options", "task_type", "type"]);
     expect(props(variant("Question", "noul"))).toEqual(["criteria", "instructions", "type"]);
     expect(props(variant("Question", "score"))).toEqual(["instructions", "levels", "type"]);
+    expect(props(variant("Question", "multi"))).toEqual(["instructions", "options", "type"]);
+    expect(props(variant("Answer", "multi"))).toEqual(["probabilities", "type", "values"]);
     expect(props("NoulCriteria")).toEqual(["false", "true"]);
     expect(props("DecideRequest")).toEqual(["context", "model", "questions"]);
     expect(props("FeedbackRequest")).toEqual([
@@ -75,7 +80,36 @@ describe("OpenAPI snapshot", () => {
     expect(props("FeedbackResponse")).toEqual(["created_at", "id", "object", "question_id", "request_id"]);
     expect(props("Model")).toEqual(["id", "object", "status"]);
   });
+
+  it("agrees on content parts and assets (Krun One V1)", () => {
+    expect(Object.keys(SCHEMAS.ContentPart.discriminator.mapping).sort()).toEqual([
+      "audio",
+      "document",
+      "image",
+      "text",
+    ]);
+    expect(props(variant("ContentPart", "text"))).toEqual(["id", "text", "type"]);
+    for (const tag of ["image", "document", "audio"]) {
+      expect(props(variant("ContentPart", tag))).toEqual(["asset_id", "id", "type"]);
+    }
+    const context = SCHEMAS.DecideRequest.properties.context.oneOf;
+    expect(context.map((c: { type: string }) => c.type)).toEqual(["string", "array"]);
+    expect(props("Asset").map(camel).sort()).toEqual(
+      ["createdAt", "expiresAt", "id", "mimeType", "object", "sha256", "sizeBytes"].sort(),
+    );
+    expect(Object.keys(parseAsset(ASSET_WIRE)).sort()).toEqual(props("Asset").map(camel).sort());
+  });
 });
+
+const ASSET_WIRE = {
+  id: "asset_7fQ2mZkP0aLxAAAAAAAAAAAA",
+  object: "asset",
+  mime_type: "application/pdf",
+  size_bytes: 1234,
+  sha256: "ab".repeat(32),
+  created_at: "2026-09-29T12:00:00Z",
+  expires_at: "2026-09-30T12:00:00Z",
+};
 
 describe("serialized requests validate against the schema", () => {
   it("decide", () => {
@@ -91,6 +125,25 @@ describe("serialized requests validate against the schema", () => {
       model: "krun-one-v0",
     });
     expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("decide with content parts and a multi question (Krun One V1)", () => {
+    const validate = schemaValidator("DecideRequest");
+    const body = decideBody({
+      context: [
+        { type: "text", text: "Is this invoice paid?", id: "q" },
+        { type: "image", assetId: "asset_img00000001" },
+        { type: "document", assetId: "asset_7fQ2mZkP0aLxAAAAAAAAAAAA", id: "invoice" },
+        { type: "audio", assetId: "asset_aud-0000_01" },
+      ],
+      questions: {
+        paid: { type: "noul", instructions: "Is the document marked as paid?" },
+        tags: { type: "multi", options: { invoice: null, receipt: "", overdue: "Past due" } },
+        tags2: { type: "multi", options: { a: "", b: "" }, instructions: "Select every element present" },
+      },
+    });
+    expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
+    expect(schemaValidator("Asset")(ASSET_WIRE)).toBe(true);
   });
 
   it("feedback", () => {

@@ -7,6 +7,7 @@ import {
   APIError,
   APIResponseValidationError,
   APITimeoutError,
+  type Asset,
   AuthenticationError,
   type ChoiceQuestion,
   InferenceFailedError,
@@ -16,6 +17,7 @@ import {
   KrunError,
   type KrunOptions,
   NotFoundError,
+  PermissionDeniedError,
   QuotaExceededError,
   RateLimitError,
   ServiceUnavailableError,
@@ -56,6 +58,8 @@ interface Seen {
   method: string;
   headers: Headers;
   body: unknown;
+  /** `init.body` exactly as handed to fetch (string for JSON, bytes/Blob for asset uploads). */
+  raw: unknown;
 }
 
 function makeClient(handler: Handler, options: KrunOptions = {}): { client: Krun; seen: Seen[] } {
@@ -67,6 +71,7 @@ function makeClient(handler: Handler, options: KrunOptions = {}): { client: Krun
       method: init.method ?? "GET",
       headers: new Headers(init.headers),
       body: typeof init.body === "string" ? JSON.parse(init.body) : undefined,
+      raw: init.body,
     });
     if (init.signal?.aborted) throw init.signal.reason;
     return await handler(url, init);
@@ -707,5 +712,312 @@ describe("models", () => {
     expect(seen[0]?.method).toBe("GET");
     expect(seen[0]?.url).toBe("https://api.krun.ai/v1/models");
     expect(seen[0]?.headers.get("authorization")).toBe(`Bearer ${KEY}`);
+  });
+});
+
+// ------------------------------------------------------------------------------------------ Krun One V1 (upcoming)
+
+describe("text-only requests are unchanged (Krun One V1)", () => {
+  it("sends the exact legacy JSON body for a string context", async () => {
+    const { client, seen } = makeClient(json(DECIDE_OK));
+    await decide(client);
+    expect(seen[0]?.raw).toBe(
+      '{"context":"Customer wants to return an item.","questions":{"department":{"type":"choice","options":' +
+        '{"shipping":"Shipping and delivery issues","returns":"Returns and refunds",' +
+        '"billing":"Billing and payment issues"}}}}',
+    );
+    expect(seen[0]?.headers.get("content-type")).toBe("application/json");
+  });
+});
+
+describe("content parts (Krun One V1)", () => {
+  it("serializes a context array, mapping assetId to asset_id", async () => {
+    const { client, seen } = makeClient(json(DECIDE_OK));
+    await client.decide({
+      context: [
+        { type: "text", text: "Is this invoice paid?" },
+        { type: "document", assetId: "asset_7fQ2mZkP0aLxAAAAAAAAAAAA", id: "invoice" },
+        { type: "image", assetId: "asset_img00000001" },
+        { type: "audio", assetId: "asset_aud00000001", id: null },
+        { type: "text", text: "second", id: "t2" },
+      ],
+      questions: { department: DEPARTMENT },
+    });
+    expect(seen[0]?.raw).toBe(
+      JSON.stringify({
+        context: [
+          { type: "text", text: "Is this invoice paid?" },
+          { type: "document", id: "invoice", asset_id: "asset_7fQ2mZkP0aLxAAAAAAAAAAAA" },
+          { type: "image", asset_id: "asset_img00000001" },
+          { type: "audio", id: null, asset_id: "asset_aud00000001" },
+          { type: "text", text: "second", id: "t2" },
+        ],
+        questions: { department: DEPARTMENT },
+      }),
+    );
+  });
+
+  it("sends unknown part types as is so the API can answer UNSUPPORTED_MODALITY", async () => {
+    const { client, seen } = makeClient(apiError(400, "UNSUPPORTED_MODALITY", "video is not supported"));
+    const context = [{ type: "video", assetId: "asset_vid00000001" }] as never;
+    const err = (await client.decide({ context, questions: { department: DEPARTMENT } }).catch((e) => e)) as APIError;
+    expect((firstBody(seen) as { context: unknown }).context).toEqual([
+      { type: "video", asset_id: "asset_vid00000001" },
+    ]);
+    expect(err).toBeInstanceOf(InvalidRequestError);
+    expect(err.errorCode).toBe("UNSUPPORTED_MODALITY");
+  });
+
+  it("checks part shapes before any request", async () => {
+    const { client, seen } = makeClient(json(DECIDE_OK));
+    const bad = client as unknown as { decide: (p: unknown) => Promise<unknown> };
+    const q = { d: DEPARTMENT };
+    await expect(bad.decide({ context: ["text"], questions: q })).rejects.toThrow(TypeError);
+    await expect(bad.decide({ context: [{ text: "no type" }], questions: q })).rejects.toThrow(TypeError);
+    await expect(bad.decide({ context: [{ type: "image" }], questions: q })).rejects.toThrow(/assetId/);
+    await expect(
+      bad.decide({ context: [{ type: "image", asset_id: "asset_x0000000" }], questions: q }),
+    ).rejects.toThrow(/the SDK field is `assetId`/);
+    await expect(bad.decide({ context: 42, questions: q })).rejects.toThrow(/string or an array/);
+    expect(seen).toHaveLength(0);
+  });
+});
+
+describe("multi questions (Krun One V1)", () => {
+  const MULTI_OK = {
+    model: "krun-one-v1",
+    answers: {
+      tags: {
+        type: "multi",
+        values: ["invoice", "overdue"],
+        probabilities: { invoice: 0.97, receipt: 0.04, overdue: 0.81 },
+      },
+      none: { type: "multi", values: [], probabilities: { a: 0.1, b: 0.2 } },
+    },
+    usage: { input_tokens: 90 },
+  };
+
+  it("serializes the question and parses the answer", async () => {
+    const { client, seen } = makeClient(json(MULTI_OK));
+    const result = await client.decide({
+      context: "x",
+      questions: {
+        tags: {
+          type: "multi",
+          options: { invoice: null, receipt: "", overdue: "Past due" },
+          instructions: "Select every label that applies",
+        },
+        none: { type: "multi", options: { a: "", b: "" } },
+      },
+    });
+    expect(firstBody(seen)).toEqual({
+      context: "x",
+      questions: {
+        tags: {
+          type: "multi",
+          options: { invoice: null, receipt: "", overdue: "Past due" },
+          instructions: "Select every label that applies",
+        },
+        none: { type: "multi", options: { a: "", b: "" } },
+      },
+    });
+    expect(result.answers.tags).toEqual({
+      type: "multi",
+      values: ["invoice", "overdue"],
+      probabilities: { invoice: 0.97, receipt: 0.04, overdue: 0.81 },
+    });
+    expect(Object.keys(result.answers.tags.probabilities)).toEqual(["invoice", "receipt", "overdue"]);
+    expect(result.answers.none.values).toEqual([]);
+  });
+
+  const tags = MULTI_OK.answers.tags;
+  it.each([
+    ["values not a list", { ...tags, values: "invoice" }],
+    ["value not a string", { ...tags, values: [1] }],
+    ["no probabilities", { type: "multi", values: [] }],
+    ["bad probability", { ...tags, probabilities: { invoice: "high" } }],
+  ])("rejects a malformed multi answer (%s)", async (_name, answer) => {
+    const { client } = makeClient(json({ ...MULTI_OK, answers: { tags: answer } }));
+    await expect(
+      client.decide({ context: "x", questions: { tags: { type: "multi", options: { a: "", b: "" } } } }),
+    ).rejects.toBeInstanceOf(APIResponseValidationError);
+  });
+});
+
+const ASSET_OK = {
+  id: "asset_7fQ2mZkP0aLxAAAAAAAAAAAA",
+  object: "asset",
+  mime_type: "image/png",
+  size_bytes: 4,
+  sha256: "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+  created_at: "2026-09-29T12:00:00Z",
+  expires_at: "2026-09-30T12:00:00Z",
+};
+
+const ASSET_PARSED: Asset = {
+  id: "asset_7fQ2mZkP0aLxAAAAAAAAAAAA",
+  object: "asset",
+  mimeType: "image/png",
+  sizeBytes: 4,
+  sha256: "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+  createdAt: new Date("2026-09-29T12:00:00Z"),
+  expiresAt: new Date("2026-09-30T12:00:00Z"),
+};
+
+describe("assets (Krun One V1)", () => {
+  const BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+  it("uploads a Uint8Array as the raw body with Content-Type = mimeType", async () => {
+    const { client, seen } = makeClient(json(ASSET_OK, 201));
+    const asset = await client.assets.create(BYTES, { mimeType: "image/png" });
+    expect(asset).toEqual(ASSET_PARSED);
+    expect(seen[0]?.method).toBe("POST");
+    expect(seen[0]?.url).toBe("https://api.krun.ai/v1/assets");
+    expect(seen[0]?.headers.get("content-type")).toBe("image/png");
+    expect(seen[0]?.headers.get("authorization")).toBe(`Bearer ${KEY}`);
+    expect(seen[0]?.headers.get("accept")).toBe("application/json");
+    expect(seen[0]?.raw).toBe(BYTES);
+  });
+
+  it("accepts a Node Buffer, an ArrayBuffer and a Blob (defaulting mimeType to blob.type)", async () => {
+    const { client, seen } = makeClient(json(ASSET_OK, 201));
+    const buf = Buffer.from("%PDF-1.7");
+    await client.assets.create(buf, { mimeType: "application/pdf" });
+    await client.assets.create(BYTES.buffer, { mimeType: "image/png" });
+    const blob = new Blob([BYTES], { type: "image/webp" });
+    await client.assets.create(blob);
+    await client.assets.create(blob, { mimeType: "image/png" });
+    expect(seen.map((r) => r.headers.get("content-type"))).toEqual([
+      "application/pdf",
+      "image/png",
+      "image/webp",
+      "image/png",
+    ]);
+    expect(seen[0]?.raw).toBe(buf);
+    expect(seen[1]?.raw).toBe(BYTES.buffer);
+    expect(seen[2]?.raw).toBe(blob);
+  });
+
+  it("checks arguments before any request", async () => {
+    const { client, seen } = makeClient(json(ASSET_OK, 201));
+    const bad = client.assets as unknown as { create: (d: unknown, o?: unknown) => Promise<unknown> };
+    await expect(bad.create(BYTES)).rejects.toThrow(/mimeType is required/);
+    await expect(bad.create(new Blob([BYTES]))).rejects.toThrow(/mimeType is required/);
+    await expect(bad.create("not bytes", { mimeType: "text/plain" })).rejects.toThrow(TypeError);
+    await expect(client.assets.get("")).rejects.toThrow(TypeError);
+    await expect(client.assets.delete("")).rejects.toThrow(TypeError);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("gets an asset", async () => {
+    const { client, seen } = makeClient(json(ASSET_OK));
+    expect(await client.assets.get("asset_7fQ2mZkP0aLxAAAAAAAAAAAA")).toEqual(ASSET_PARSED);
+    expect(seen[0]?.method).toBe("GET");
+    expect(seen[0]?.url).toBe("https://api.krun.ai/v1/assets/asset_7fQ2mZkP0aLxAAAAAAAAAAAA");
+    expect(seen[0]?.raw).toBeNull();
+    expect(seen[0]?.headers.has("content-type")).toBe(false);
+  });
+
+  it("deletes an asset", async () => {
+    const { client, seen } = makeClient(json({ id: "asset_7fQ2mZkP0aLxAAAAAAAAAAAA", object: "asset", deleted: true }));
+    expect(await client.assets.delete("asset_7fQ2mZkP0aLxAAAAAAAAAAAA")).toEqual({
+      id: "asset_7fQ2mZkP0aLxAAAAAAAAAAAA",
+      object: "asset",
+      deleted: true,
+    });
+    expect(seen[0]?.method).toBe("DELETE");
+    expect(seen[0]?.url).toBe("https://api.krun.ai/v1/assets/asset_7fQ2mZkP0aLxAAAAAAAAAAAA");
+  });
+
+  it("escapes the asset id in the path", async () => {
+    const { client, seen } = makeClient(json(ASSET_OK));
+    await client.assets.get("asset_../../v1/models?x");
+    expect(seen[0]?.url).toBe("https://api.krun.ai/v1/assets/asset_..%2F..%2Fv1%2Fmodels%3Fx");
+  });
+
+  it.each([
+    ["not an object", []],
+    ["size not an integer", { ...ASSET_OK, size_bytes: 1.5 }],
+    ["bad expires_at", { ...ASSET_OK, expires_at: "tomorrow" }],
+    ["no sha256", { ...ASSET_OK, sha256: undefined }],
+  ])("rejects a malformed asset (%s)", async (_name, body) => {
+    const { client } = makeClient(json(body));
+    await expect(client.assets.get("asset_7fQ2mZkP0aLxAAAAAAAAAAAA")).rejects.toBeInstanceOf(
+      APIResponseValidationError,
+    );
+  });
+
+  it("never retries create or delete; retries get", async () => {
+    const unavailable = apiError(503, "UPSTREAM_UNAVAILABLE", "down", "r", { "Retry-After": "0" });
+    let { client, seen } = makeClient(sequence(unavailable, json(ASSET_OK, 201)), { maxRetries: 3 });
+    await expect(client.assets.create(BYTES, { mimeType: "image/png" })).rejects.toBeInstanceOf(
+      ServiceUnavailableError,
+    );
+    expect(seen).toHaveLength(1);
+
+    ({ client, seen } = makeClient(sequence(unavailable, json({ id: "a", object: "asset", deleted: true })), {
+      maxRetries: 3,
+    }));
+    await expect(client.assets.delete("asset_7fQ2mZkP0aLxAAAAAAAAAAAA")).rejects.toBeInstanceOf(
+      ServiceUnavailableError,
+    );
+    expect(seen).toHaveLength(1);
+
+    ({ client, seen } = makeClient(sequence(unavailable, json(ASSET_OK)), { maxRetries: 3 }));
+    expect(await client.assets.get("asset_7fQ2mZkP0aLxAAAAAAAAAAAA")).toEqual(ASSET_PARSED);
+    expect(seen).toHaveLength(2);
+  });
+});
+
+describe("multimodal error codes (Krun One V1)", () => {
+  it.each([
+    [400, "UNSUPPORTED_MODALITY", InvalidRequestError],
+    [415, "UNSUPPORTED_MIME_TYPE", InvalidRequestError],
+    [404, "ASSET_NOT_FOUND", NotFoundError],
+    [403, "ASSET_FORBIDDEN", PermissionDeniedError],
+    [410, "ASSET_EXPIRED", NotFoundError],
+    [413, "ASSET_TOO_LARGE", InvalidRequestError],
+    [400, "TOO_MANY_IMAGES", InvalidRequestError],
+    [400, "TOO_MANY_DOCUMENTS", InvalidRequestError],
+    [400, "TOO_MANY_AUDIO", InvalidRequestError],
+    [400, "DOCUMENT_TOO_MANY_PAGES", InvalidRequestError],
+    [400, "AUDIO_TOO_LONG", InvalidRequestError],
+    [422, "DECODE_FAILED", InvalidRequestError],
+    [502, "OCR_FAILED", InferenceFailedError],
+    [502, "ASR_FAILED", InferenceFailedError],
+    [502, "VISION_FAILED", InferenceFailedError],
+    [500, "MULTIMODAL_INFERENCE_FAILED", InternalServerError],
+  ] as const)("maps %i %s", async (status, code, cls) => {
+    const { client } = makeClient(apiError(status, code, "details here", "req_mm"), { maxRetries: 0 });
+    const err = (await client
+      .decide({ context: [{ type: "image", assetId: "asset_img00000001" }], questions: { department: DEPARTMENT } })
+      .catch((e: unknown) => e)) as APIError;
+    expect(err.constructor).toBe(cls);
+    expect(err).toBeInstanceOf(APIError);
+    expect(err.statusCode).toBe(status);
+    expect(err.errorCode).toBe(code);
+    expect(err.message).toBe("details here");
+    expect(err.requestId).toBe("req_mm");
+  });
+
+  it("surfaces asset errors from assets.create / get", async () => {
+    let { client } = makeClient(apiError(415, "UNSUPPORTED_MIME_TYPE", "content does not match audio/wav"));
+    let err = (await client.assets.create(new Uint8Array([1]), { mimeType: "audio/wav" }).catch((e) => e)) as APIError;
+    expect(err).toBeInstanceOf(InvalidRequestError);
+    expect(err.errorCode).toBe("UNSUPPORTED_MIME_TYPE");
+    ({ client } = makeClient(apiError(410, "ASSET_EXPIRED", "expired")));
+    err = (await client.assets.get("asset_7fQ2mZkP0aLxAAAAAAAAAAAA").catch((e) => e)) as APIError;
+    expect(err).toBeInstanceOf(NotFoundError);
+    expect(err.errorCode).toBe("ASSET_EXPIRED");
+  });
+
+  it.each([
+    [410, NotFoundError],
+    [415, InvalidRequestError],
+  ] as const)("maps %i without a code by status", async (status, cls) => {
+    const { client } = makeClient(() => new Response("gone", { status }), { maxRetries: 0 });
+    const err = (await client.assets.get("asset_7fQ2mZkP0aLxAAAAAAAAAAAA").catch((e: unknown) => e)) as APIError;
+    expect(err.constructor).toBe(cls);
+    expect(err.errorCode).toBeNull();
   });
 });

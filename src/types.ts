@@ -1,8 +1,9 @@
 /**
  * Public request and response types.
  *
- * Three decision primitives: `choice` (pick an option), `noul` (probability that a yes/no proposition holds) and
- * `score` (rate on ordered levels). Questions and answers are discriminated unions on `type`.
+ * Decision primitives: `choice` (pick an option), `noul` (probability that a yes/no proposition holds), `score` (rate
+ * on ordered levels) and `multi` (select every option that applies; Krun One V1, upcoming). Questions, answers and
+ * content parts are discriminated unions on `type`.
  *
  * Question ids, option ids and level order are whatever the caller chose: they are never renamed, validated against an
  * enum or re-ordered. When the `questions` object is written inline, TypeScript infers them, so
@@ -11,7 +12,7 @@
  */
 
 /** The decision primitive of a question (and of its answer). */
-export type QuestionType = "choice" | "noul" | "score";
+export type QuestionType = "choice" | "noul" | "score" | "multi";
 
 /** `intent` (the API default) or `tool` (tool/function routing). */
 export type TaskType = "intent" | "tool";
@@ -57,15 +58,79 @@ export interface ScoreQuestion {
   levels: readonly string[];
 }
 
+/**
+ * A `multi` question: select every option that applies; each option gets its own independent probability.
+ *
+ * Krun One V1 (upcoming): not yet available on api.krun.ai.
+ */
+export interface MultiQuestion<OptionId extends string = string> {
+  type: "multi";
+  /** Option id → description (2–64 options). Use `""` or `null` for label-only options. */
+  options: Record<OptionId, string | null>;
+  /** Optional instruction (1–1,000 characters), e.g. "Select every element present in the document". */
+  instructions?: string | null;
+}
+
 /** Every question type the API accepts, discriminated by `type`. */
-export type Question = ChoiceQuestion | NoulQuestion | ScoreQuestion;
+export type Question = ChoiceQuestion | NoulQuestion | ScoreQuestion | MultiQuestion;
 
 /** Question id → question (1–16). */
 export type Questions = Record<string, Question>;
 
+// ------------------------------------------------------------------------------------------ content parts (V1)
+//
+// Krun One V1 (upcoming): not yet available on api.krun.ai. A context can be a list of parts instead of a string.
+// Every modality is input only: the answer is always the structured decision.
+
+/** Kind of a content part. */
+export type ContentPartType = "text" | "image" | "document" | "audio";
+
+/** A piece of text (1–8,000 characters). Text parts are joined with newlines by the API. */
+export interface TextPart {
+  type: "text";
+  text: string;
+  /** Optional caller-chosen id of the part (≤ 100 characters), echoed only in errors. */
+  id?: string | null;
+}
+
+/** An image (PNG / JPEG / WebP, ≤ 10 MB), uploaded with `client.assets.create()`. Up to 4 per request. */
+export interface ImagePart {
+  type: "image";
+  /** `Asset.id` of an asset uploaded by the same project (sent as `asset_id`). */
+  assetId: string;
+  /** Optional caller-chosen id of the part (≤ 100 characters), echoed only in errors. */
+  id?: string | null;
+}
+
+/**
+ * A document (PDF / DOCX / plain text / Markdown / HTML, ≤ 25 MB and 20 pages, or a page image such as a scan).
+ * Up to 2 per request.
+ */
+export interface DocumentPart {
+  type: "document";
+  /** `Asset.id` of an asset uploaded by the same project (sent as `asset_id`). */
+  assetId: string;
+  /** Optional caller-chosen id of the part (≤ 100 characters), echoed only in errors. */
+  id?: string | null;
+}
+
+/** Audio (WAV / MP3 / FLAC / OGG, ≤ 10 MB and 30 s; ≤ 20 s recommended). 1 per request. */
+export interface AudioPart {
+  type: "audio";
+  /** `Asset.id` of an asset uploaded by the same project (sent as `asset_id`). */
+  assetId: string;
+  /** Optional caller-chosen id of the part (≤ 100 characters), echoed only in errors. */
+  id?: string | null;
+}
+
+/** One piece of evidence in a multimodal context, discriminated by `type`. */
+export type ContentPart = TextPart | ImagePart | DocumentPart | AudioPart;
+
 export interface DecideParams<Q extends Questions = Questions> {
-  /** The text to decide on (1–8,000 characters). */
-  context: string;
+  /**
+   * The text to decide on (1–8,000 characters), or (Krun One V1, upcoming) an ordered list of 1–16 content parts.
+   */
+  context: string | readonly ContentPart[];
   /** Question id → question (1–16). */
   questions: Q;
   /** Optional model id (defaults to the API's default model). */
@@ -161,8 +226,17 @@ export interface ScoreAnswer {
   probabilities: Record<string, number>;
 }
 
+/** The answer to one `multi` question (Krun One V1, upcoming). */
+export interface MultiAnswer<OptionId extends string = string> {
+  type: "multi";
+  /** Option ids that apply, in request order (possibly empty). */
+  values: OptionId[];
+  /** Probability that each option applies, in [0, 1], in request order. Independent: they do not sum to 1. */
+  probabilities: Record<OptionId, number>;
+}
+
 /** Every answer type the API returns, discriminated by `type`: narrow with `if (answer.type === "score")`. */
-export type Answer = ChoiceAnswer | NoulAnswer | ScoreAnswer;
+export type Answer = ChoiceAnswer | NoulAnswer | ScoreAnswer | MultiAnswer;
 
 /** The answer type for a question type. */
 export type AnswerFor<Q extends Question> = Q extends ChoiceQuestion
@@ -171,7 +245,9 @@ export type AnswerFor<Q extends Question> = Q extends ChoiceQuestion
     ? NoulAnswer
     : Q extends ScoreQuestion
       ? ScoreAnswer
-      : Answer;
+      : Q extends MultiQuestion
+        ? MultiAnswer<Extract<keyof Q["options"], string>>
+        : Answer;
 
 /** Answers keyed by the question ids of the request. */
 export type Answers<Q extends Questions = Questions> = { [K in keyof Q]: AnswerFor<Q[K]> };
@@ -207,4 +283,38 @@ export interface Model {
   id: string;
   object: string;
   status: string;
+}
+
+// --------------------------------------------------------------------------------------------------- assets (V1)
+
+/** File contents accepted by `client.assets.create()`: a `Blob`/`File`, an `ArrayBuffer` or a typed array (`Buffer`). */
+export type AssetData = Blob | ArrayBuffer | ArrayBufferView;
+
+export interface CreateAssetOptions extends RequestOptions {
+  /**
+   * MIME type of the file, sent as `Content-Type` (e.g. `"image/png"`, `"application/pdf"`, `"audio/wav"`). Optional
+   * when `data` is a `Blob`/`File` with a `type`.
+   */
+  mimeType?: string;
+}
+
+/** An uploaded media file (Krun One V1, upcoming). Reference it in a content part by `id`. */
+export interface Asset {
+  /** `asset_...`: use it as `assetId` in an image / document / audio part. */
+  id: string;
+  object: string;
+  mimeType: string;
+  sizeBytes: number;
+  /** Hex SHA-256 of the uploaded bytes. */
+  sha256: string;
+  createdAt: Date;
+  /** After this time the asset can no longer be referenced (default 24 h after upload). */
+  expiresAt: Date;
+}
+
+/** Result of `client.assets.delete()`. */
+export interface DeletedAsset {
+  id: string;
+  object: string;
+  deleted: boolean;
 }

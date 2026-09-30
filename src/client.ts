@@ -7,6 +7,9 @@
  *   502/503/504. The wait honours `Retry-After` (capped at 10 s), otherwise 0.5 s, 1 s, 2 s, ... A decision is
  *   read-only apart from usage accounting, so a retry can at worst count one extra decision.
  * - `feedback()` writes a row and the API has no idempotency key, so it is never retried.
+ * - `assets.create()` creates a resource (no idempotency key either) and `assets.delete()` would answer
+ *   `ASSET_NOT_FOUND` on a repeat that follows a lost response, so neither is retried. `assets.get()` is read-only and
+ *   retried like `models()`.
  * - The SDK timeout (`APITimeoutError`) is never retried: `timeout` bounds the wait for an attempt, and a request
  *   that already took that long is not repeated behind the caller's back.
  */
@@ -20,9 +23,13 @@ import {
   KrunError,
 } from "./errors.js";
 import type {
+  Asset,
+  AssetData,
+  CreateAssetOptions,
   DecideOptions,
   DecideParams,
   DecisionResult,
+  DeletedAsset,
   Feedback,
   FeedbackParams,
   Model,
@@ -30,7 +37,15 @@ import type {
   RequestOptions,
 } from "./types.js";
 import { VERSION } from "./version.js";
-import { decideBody, feedbackBody, parseDecision, parseFeedback, parseModels } from "./wire.js";
+import {
+  decideBody,
+  feedbackBody,
+  parseAsset,
+  parseDecision,
+  parseDeletedAsset,
+  parseFeedback,
+  parseModels,
+} from "./wire.js";
 
 export interface KrunOptions {
   /** `krun_live_...` key. Defaults to `process.env.KRUN_API_KEY` (Node). */
@@ -83,12 +98,83 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 interface Send {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "DELETE";
   path: string;
+  /** JSON body. */
   body?: unknown;
+  /** Raw body sent as is with its own `Content-Type` (asset uploads). */
+  raw?: { data: Blob | ArrayBuffer | ArrayBufferView; contentType: string } | undefined;
   requestId?: string | undefined;
   maxRetries: number;
   options?: RequestOptions | undefined;
+}
+
+type Sender = (req: Send) => Promise<{ data: unknown; requestId: string | null }>;
+
+function isAssetData(data: unknown): data is AssetData {
+  return (
+    (typeof Blob !== "undefined" && data instanceof Blob) || data instanceof ArrayBuffer || ArrayBuffer.isView(data)
+  );
+}
+
+function assetPath(assetId: string): string {
+  if (typeof assetId !== "string" || assetId === "") throw new TypeError("assetId must be a non-empty string");
+  return `/v1/assets/${encodeURIComponent(assetId)}`;
+}
+
+/**
+ * Media files referenced by image / document / audio content parts (`client.assets`).
+ *
+ * Krun One V1 (upcoming): not yet available on api.krun.ai.
+ */
+export class Assets {
+  readonly #send: Sender;
+  readonly #maxRetries: () => number;
+
+  /** @internal Created by `Krun`. */
+  constructor(send: Sender, maxRetries: () => number) {
+    this.#send = send;
+    this.#maxRetries = maxRetries;
+  }
+
+  /**
+   * Upload a file: the bytes are the request body and `mimeType` its `Content-Type`. Never retried.
+   *
+   * ```ts
+   * const asset = await client.assets.create(await readFile("invoice.pdf"), { mimeType: "application/pdf" });
+   * await client.decide({ context: [{ type: "document", assetId: asset.id }], questions: {...} });
+   * ```
+   */
+  async create(data: AssetData, options: CreateAssetOptions = {}): Promise<Asset> {
+    if (!isAssetData(data)) throw new TypeError("data must be a Blob, an ArrayBuffer or a typed array (e.g. Buffer)");
+    const blobType = typeof Blob !== "undefined" && data instanceof Blob ? data.type : "";
+    const mimeType = options.mimeType ?? blobType;
+    if (typeof mimeType !== "string" || mimeType === "") {
+      throw new TypeError('mimeType is required (e.g. { mimeType: "image/png" }) unless data is a Blob with a type');
+    }
+    const { data: body } = await this.#send({
+      method: "POST",
+      path: "/v1/assets",
+      raw: { data, contentType: mimeType },
+      maxRetries: 0,
+      options,
+    });
+    return parseAsset(body);
+  }
+
+  /** Metadata of an asset uploaded by this project. */
+  async get(assetId: string, options?: RequestOptions): Promise<Asset> {
+    const path = assetPath(assetId);
+    const { data } = await this.#send({ method: "GET", path, maxRetries: this.#maxRetries(), options });
+    return parseAsset(data);
+  }
+
+  /** Delete an asset before it expires. Never retried. */
+  async delete(assetId: string, options?: RequestOptions): Promise<DeletedAsset> {
+    const path = assetPath(assetId);
+    const { data } = await this.#send({ method: "DELETE", path, maxRetries: 0, options });
+    return parseDeletedAsset(data);
+  }
 }
 
 /**
@@ -105,6 +191,8 @@ export class Krun {
   readonly baseUrl: string;
   readonly timeout: number;
   readonly maxRetries: number;
+  /** Media uploads for multimodal contexts (Krun One V1, upcoming: not yet available on api.krun.ai). */
+  readonly assets: Assets;
   // True private fields: not enumerable, not in JSON.stringify, not in util.inspect / console.log.
   readonly #apiKey: string;
   readonly #fetch: typeof fetch;
@@ -125,6 +213,10 @@ export class Krun {
     const f = options.fetch ?? globalThis.fetch;
     if (typeof f !== "function") throw new KrunError("No fetch implementation: use Node >= 20 or pass { fetch }.");
     this.#fetch = f;
+    this.assets = new Assets(
+      (req) => this.#send(req),
+      () => this.maxRetries,
+    );
   }
 
   /**
@@ -180,8 +272,11 @@ export class Krun {
       "User-Agent": USER_AGENT,
     };
     if (req.requestId !== undefined) headers["X-Request-ID"] = req.requestId;
-    let payload: string | undefined;
-    if (req.body !== undefined) {
+    let payload: BodyInit | undefined;
+    if (req.raw !== undefined) {
+      headers["Content-Type"] = req.raw.contentType;
+      payload = req.raw.data as BodyInit;
+    } else if (req.body !== undefined) {
       headers["Content-Type"] = "application/json";
       payload = JSON.stringify(req.body);
     }

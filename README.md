@@ -213,6 +213,62 @@ const models = await client.models();
 // [{ id: "krun-one-v0", object: "model", status: "available" }]
 ```
 
+## Krun One V1 (upcoming — not yet available on api.krun.ai)
+
+> **Upcoming.** The types and methods below ship in the SDK, but the multimodal API is **not enabled on
+> api.krun.ai yet**: calls fail until it is. Text-only calls (`context: "..."`) are unchanged, byte for byte.
+
+**Multimodal context.** `context` can be a list of 1–16 content parts instead of a string. Media (images,
+documents, audio) is uploaded first with `client.assets.create()` and referenced by `assetId`. Every modality is input
+only: the answer is always the structured decision (no generation, no video).
+
+```ts
+import { readFile } from "node:fs/promises";
+
+const invoice = await client.assets.create(await readFile("invoice.pdf"), { mimeType: "application/pdf" });
+// A Blob / File with a `type` needs no mimeType: await client.assets.create(file)
+
+const result = await client.decide({
+  context: [
+    { type: "text", text: "Is this invoice paid?" },
+    { type: "document", assetId: invoice.id }, // also "image" and "audio"; optional `id` per part
+  ],
+  questions: {
+    paid: { type: "noul", instructions: "Is the document marked as paid?" },
+    tags: { type: "multi", options: { invoice: null, receipt: null, overdue: null } },
+  },
+});
+
+result.answers.tags.values;        // ["invoice", "overdue"]: every option that applies, in request order (may be [])
+result.answers.tags.probabilities; // { invoice: 0.97, receipt: 0.04, overdue: 0.81 }: independent, not a distribution
+
+await client.assets.get(invoice.id);    // Asset { id, object, mimeType, sizeBytes, sha256, createdAt, expiresAt }
+await client.assets.delete(invoice.id); // { id, object: "asset", deleted: true }
+```
+
+- **`multi` question**: `{ type: "multi", options, instructions? }` (2–64 options) → `MultiAnswer { values,
+  probabilities }`.
+- **Assets**: `create(data, { mimeType })` sends the raw bytes (`Blob`, `ArrayBuffer`, `Uint8Array` / `Buffer`) with
+  `Content-Type: mimeType`; it is never retried (it creates a resource), and neither is `delete()`. Assets are usable
+  only by the project that uploaded them and expire after 24 h (`expiresAt`).
+
+| family | MIME types | limits |
+|---|---|---|
+| image | `image/png`, `image/jpeg`, `image/webp` | 10 MB; ≤ 4 per request |
+| document | `application/pdf`, DOCX, `text/plain`, `text/markdown`, `text/html` (or a page image, e.g. a scan) | 25 MB, 20 pages; ≤ 2 per request |
+| audio | `audio/wav`, `audio/mpeg`, `audio/flac`, `audio/ogg` | 10 MB, 30 s (≤ 20 s recommended); 1 per request |
+
+- **Errors**: new codes reuse the class of their HTTP status; check `err.errorCode`. `InvalidRequestError`:
+  `UNSUPPORTED_MODALITY`, `UNSUPPORTED_MIME_TYPE` (415), `ASSET_TOO_LARGE` (413), `TOO_MANY_IMAGES`,
+  `TOO_MANY_DOCUMENTS`, `TOO_MANY_AUDIO`, `DOCUMENT_TOO_MANY_PAGES`, `AUDIO_TOO_LONG`, `DECODE_FAILED` (422).
+  `NotFoundError`: `ASSET_NOT_FOUND`, `ASSET_EXPIRED` (410). `PermissionDeniedError`: `ASSET_FORBIDDEN`.
+  `InferenceFailedError` (502): `OCR_FAILED`, `ASR_FAILED`, `VISION_FAILED`. `InternalServerError`:
+  `MULTIMODAL_INFERENCE_FAILED`.
+- **Known limitations**: audio over 20 s may be transcribed only partially; abstention on media is advisory; several
+  media items per request work but are not quality-validated; numeric comparison and hard visual negatives are weak.
+
+See [`examples/multimodal.ts`](examples/multimodal.ts).
+
 ## Configuration
 
 ```ts
@@ -267,11 +323,11 @@ available:
 ```text
 KrunError
 ├── APIError                     the API answered with an error (statusCode always set)
-│   ├── InvalidRequestError      400/413  INVALID_REQUEST, INVALID_OPTIONS, PAYLOAD_TOO_LARGE
+│   ├── InvalidRequestError      400/413  INVALID_REQUEST, INVALID_OPTIONS, PAYLOAD_TOO_LARGE (+ V1 codes, 415/422)
 │   ├── AuthenticationError      401      UNAUTHORIZED
 │   ├── InsufficientCreditsError 402      INSUFFICIENT_CREDITS
-│   ├── PermissionDeniedError    403      FORBIDDEN, SIGNUP_RESTRICTED
-│   ├── NotFoundError            404      NOT_FOUND
+│   ├── PermissionDeniedError    403      FORBIDDEN, SIGNUP_RESTRICTED (+ ASSET_FORBIDDEN)
+│   ├── NotFoundError            404      NOT_FOUND (+ ASSET_NOT_FOUND, ASSET_EXPIRED 410)
 │   ├── ConflictError            409      CONFLICT
 │   ├── RateLimitError           429      RATE_LIMITED       (.retryAfter)
 │   ├── QuotaExceededError       429      QUOTA_EXCEEDED
@@ -316,7 +372,7 @@ Wrong argument types (e.g. `context: null` from untyped code) throw `TypeError` 
 ## Examples
 
 [`examples/`](examples/): `basic-decision.ts`, `multiple-questions.ts`, `decision-primitives.ts`, `tool-routing.ts`,
-`feedback.ts`, `error-handling.ts`.
+`feedback.ts`, `error-handling.ts`, `multimodal.ts` (Krun One V1, upcoming).
 
 ```bash
 npm run build

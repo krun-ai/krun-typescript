@@ -19,4 +19,4 @@ export const API_VERSION = "v1";
  * generated from it; `test/contract.test.ts` keeps these values in sync and `npm run check:openapi` detects drift.
  */
 export const OPENAPI_VERSION = "1.0.0-beta";
-export const OPENAPI_SHA256 = "17b10db5cfabc239dd9f0be95961d07825ccd0393b080e41932154960a28b777";
+export const OPENAPI_SHA256 = "8cdcaf2037848b5d3e8d86ec50dd88601ea0c83bac3736c57f782968dd526b14";
