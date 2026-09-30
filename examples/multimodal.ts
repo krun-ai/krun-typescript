@@ -1,4 +1,4 @@
-// Krun One V1 (upcoming — not yet available on api.krun.ai): decide on a document plus text, with a `multi` question.
+// Krun One V1: decide on a document plus text, with a `multi` question.
 //
 //   npx tsx examples/multimodal.ts invoice.pdf
 import { readFile } from "node:fs/promises";

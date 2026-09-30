@@ -1,8 +1,8 @@
 /** Default API root. */
 export const DEFAULT_BASE_URL = "https://api.krun.ai";
 
-/** 70 s: a Serverless cold start can take most of the API's own 60 s upstream deadline. */
-export const DEFAULT_TIMEOUT_MS = 70_000;
+/** 180 s: a Krun One V1 cold start can take up to ~150 s (the API edge waits up to 150 s for the backend). */
+export const DEFAULT_TIMEOUT_MS = 180_000;
 
 /** Extra attempts for `decide()` / `models()` after connection errors or 502/503/504. `feedback()` never retries. */
 export const DEFAULT_MAX_RETRIES = 1;
@@ -19,4 +19,4 @@ export const API_VERSION = "v1";
  * generated from it; `test/contract.test.ts` keeps these values in sync and `npm run check:openapi` detects drift.
  */
 export const OPENAPI_VERSION = "1.0.0-beta";
-export const OPENAPI_SHA256 = "8cdcaf2037848b5d3e8d86ec50dd88601ea0c83bac3736c57f782968dd526b14";
+export const OPENAPI_SHA256 = "ae96a4ebfca51f2f1e4c6f5101799e00457d901c15935bc33939f77bc9f37121";
