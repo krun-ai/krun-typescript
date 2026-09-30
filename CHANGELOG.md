@@ -6,8 +6,7 @@ All notable changes to this project are documented here. The format follows
 ## [0.3.0] - 2026-09-30
 
 Krun One V1 is live on api.krun.ai (model `krun-one-v1`; `krun-one-v0` and `krun-one-v0.3` remain as aliases).
-This release also ships everything listed under 0.2.0, which was never published to npm on its own. OpenAPI
-snapshot refreshed from production (same `info.version`, `1.0.0-beta`; only description texts changed).
+OpenAPI snapshot refreshed from production (same `info.version`, `1.0.0-beta`; only description texts changed).
 
 - Default timeout raised from 70 s to **180 s** (`DEFAULT_TIMEOUT_MS = 180_000`): a Krun One V1 cold start can take
   up to ~150 s, and the API edge now waits up to 150 s for the backend.
@@ -32,10 +31,10 @@ snapshot refreshed from production (same `info.version`, `1.0.0-beta`; only desc
 - Typing note: `Answer` gains `MultiAnswer`, so exhaustive narrowing over `answer.type` needs a `"multi"` branch.
   Inline-typed questions are unaffected.
 
-## [0.2.0] - Unreleased (never published; ships as part of 0.3.0)
+## [0.2.0] - 2026-09-28
 
-Decision primitives (OpenAPI snapshot refreshed). 0.1.0 was never published to npm; 0.2.0 keeps the version in step
-with the Python SDK. 0.2.0 was never published to npm either: these changes ship in 0.3.0.
+Decision primitives (OpenAPI snapshot refreshed). First npm release (0.1.0 was never published to npm); 0.2.0 keeps
+the version in step with the Python SDK.
 
 - New question types next to `choice`: **`noul`** (`{ type: "noul", instructions, criteria? }` → probability that
   a yes/no proposition holds) and **`score`** (`{ type: "score", instructions, levels }` → expected level +

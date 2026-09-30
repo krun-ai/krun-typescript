@@ -6,14 +6,6 @@ Official TypeScript SDK for the Krun API.
 npm install @krun-ai/sdk
 ```
 
-> **Not published yet.** Until the first release is available on npm, use a local checkout.
-> Until it is published, build from a checkout:
->
-> ```bash
-> git clone https://github.com/krun-ai/krun-typescript.git && cd krun-typescript
-> npm ci && npm run build && npm pack      # then: npm install ./krun-ai-sdk-0.3.0.tgz
-> ```
-
 - ESM only, Node.js 20+ (uses the built-in `fetch`; no runtime dependencies)
 - TypeScript types with inference: question ids and option ids from your request type the result
 - Supports **Krun API v1** (`/v1/*`, OpenAPI `1.0.0-beta`)
