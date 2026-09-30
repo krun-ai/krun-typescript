@@ -52,7 +52,7 @@ export interface KrunOptions {
   apiKey?: string;
   /** API root. Defaults to `https://api.krun.ai`. */
   baseUrl?: string;
-  /** Milliseconds to wait for each attempt (connection, headers and body). Default 70 000. */
+  /** Milliseconds to wait for each attempt (connection, headers and body). Default 180 000. */
   timeout?: number;
   /** Extra attempts for `decide()`/`models()` after connection errors or 502/503/504. Default 1. */
   maxRetries?: number;
@@ -125,7 +125,7 @@ function assetPath(assetId: string): string {
 /**
  * Media files referenced by image / document / audio content parts (`client.assets`).
  *
- * Krun One V1 (upcoming): not yet available on api.krun.ai.
+ * Krun One V1.
  */
 export class Assets {
   readonly #send: Sender;
@@ -191,7 +191,7 @@ export class Krun {
   readonly baseUrl: string;
   readonly timeout: number;
   readonly maxRetries: number;
-  /** Media uploads for multimodal contexts (Krun One V1, upcoming: not yet available on api.krun.ai). */
+  /** Media uploads for multimodal contexts (Krun One V1). */
   readonly assets: Assets;
   // True private fields: not enumerable, not in JSON.stringify, not in util.inspect / console.log.
   readonly #apiKey: string;

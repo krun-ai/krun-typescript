@@ -11,7 +11,7 @@ npm install @krun-ai/sdk
 >
 > ```bash
 > git clone https://github.com/krun-ai/krun-typescript.git && cd krun-typescript
-> npm ci && npm run build && npm pack      # then: npm install ./krun-ai-sdk-0.2.0.tgz
+> npm ci && npm run build && npm pack      # then: npm install ./krun-ai-sdk-0.3.0.tgz
 > ```
 
 - ESM only, Node.js 20+ (uses the built-in `fetch`; no runtime dependencies)
@@ -210,13 +210,15 @@ Feedback for a `requestId` this project never decided throws `NotFoundError`.
 
 ```ts
 const models = await client.models();
-// [{ id: "krun-one-v0", object: "model", status: "available" }]
+// [{ id: "krun-one-v1", object: "model", status: "available" }, ...]
 ```
 
-## Krun One V1 (upcoming — not yet available on api.krun.ai)
+The current default model is **`krun-one-v1`** (Krun One V1), used when `decide()` gets no `model`. Pin it with
+`decide({ model: "krun-one-v1", ... })`. The older ids `krun-one-v0` and `krun-one-v0.3` keep working as aliases.
 
-> **Upcoming.** The types and methods below ship in the SDK, but the multimodal API is **not enabled on
-> api.krun.ai yet**: calls fail until it is. Text-only calls (`context: "..."`) are unchanged, byte for byte.
+## Krun One V1: multimodal
+
+Krun One V1 is live on api.krun.ai. Text-only calls (`context: "..."`) are unchanged, byte for byte.
 
 **Multimodal context.** `context` can be a list of 1–16 content parts instead of a string. Media (images,
 documents, audio) is uploaded first with `client.assets.create()` and referenced by `assetId`. Every modality is input
@@ -275,7 +277,7 @@ See [`examples/multimodal.ts`](examples/multimodal.ts).
 const client = new Krun({
   apiKey: "krun_live_...",         // default: process.env.KRUN_API_KEY
   baseUrl: "http://localhost:8080", // default: https://api.krun.ai
-  timeout: 70_000,                  // milliseconds per attempt (default 70 s)
+  timeout: 180_000,                 // milliseconds per attempt (default 180 s)
   maxRetries: 1,                    // decide()/models() only (default 1)
   fetch: customFetch,               // optional: proxies, instrumentation, tests
 });
@@ -288,7 +290,8 @@ There is no synchronous API: every method returns a Promise.
 
 ### Timeouts
 
-The default is **70 seconds** because a Serverless cold start can use most of the API's own 60-second deadline. The
+The default is **180 seconds** because a Krun One V1 cold start can take up to ~150 s (the API edge waits up to
+150 s for the backend). The
 timeout covers each attempt, including the response body. It cannot be disabled: `0` and `Infinity` are rejected.
 When it elapses the SDK throws `APITimeoutError`.
 
@@ -372,7 +375,7 @@ Wrong argument types (e.g. `context: null` from untyped code) throw `TypeError` 
 ## Examples
 
 [`examples/`](examples/): `basic-decision.ts`, `multiple-questions.ts`, `decision-primitives.ts`, `tool-routing.ts`,
-`feedback.ts`, `error-handling.ts`, `multimodal.ts` (Krun One V1, upcoming).
+`feedback.ts`, `error-handling.ts`, `multimodal.ts` (Krun One V1).
 
 ```bash
 npm run build
@@ -424,7 +427,7 @@ The public API is hand-written, and `https://api.krun.ai/openapi.json` is the re
 
 ## Versioning and releases
 
-SemVer, starting at `0.1.0`. SDK versions are independent of model versions (`krun-one-v0`) and of the API version
+SemVer, starting at `0.1.0`. SDK versions are independent of model versions (`krun-one-v1`) and of the API version
 (v1). See [CHANGELOG.md](CHANGELOG.md).
 
 Release flow (not yet executed):

@@ -19,7 +19,7 @@
  *     │   ├── UpstreamTimeoutError    504      UPSTREAM_TIMEOUT
  *     │   └── InternalServerError     500      INTERNAL_ERROR, MULTIMODAL_INFERENCE_FAILED
  *
- * The multimodal codes (Krun One V1, upcoming) reuse the classes of their HTTP status; tell them apart with
+ * The multimodal codes (Krun One V1) reuse the classes of their HTTP status; tell them apart with
  * `error.errorCode` (e.g. `ASSET_EXPIRED`).
  *     ├── APIConnectionError          no HTTP response (DNS, refused, reset, TLS, ...)
  *     │   └── APITimeoutError         the SDK timeout elapsed
@@ -133,7 +133,7 @@ export const CODE_TO_CLASS: Record<ErrorCode, APIErrorClass> = {
   UPSTREAM_UNAVAILABLE: ServiceUnavailableError,
   UPSTREAM_TIMEOUT: UpstreamTimeoutError,
   INTERNAL_ERROR: InternalServerError,
-  // Krun One V1 multimodal (upcoming), mapped by HTTP status.
+  // Krun One V1 multimodal, mapped by HTTP status.
   UNSUPPORTED_MODALITY: InvalidRequestError, // 400
   UNSUPPORTED_MIME_TYPE: InvalidRequestError, // 415
   ASSET_NOT_FOUND: NotFoundError, // 404

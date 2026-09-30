@@ -11,7 +11,7 @@ import {
   UpstreamTimeoutError,
 } from "@krun-ai/sdk";
 
-const client = new Krun({ maxRetries: 1, timeout: 70_000 });
+const client = new Krun({ maxRetries: 1, timeout: 180_000 });
 
 try {
   await client.decide({

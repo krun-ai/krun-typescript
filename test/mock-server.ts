@@ -6,7 +6,7 @@
  * - Checks `Authorization: Bearer <key>`, echoes/generates `X-Request-ID`.
  * - Answers `/v1/decide` with one well-formed answer per question (first option wins; a context containing
  *   "unsure" makes every answer abstain), `/v1/feedback` and `/v1/models` like production.
- * - Krun One V1 (upcoming): `multi` questions, content-part contexts (asset ids must have been uploaded) and
+ * - Krun One V1: `multi` questions, content-part contexts (asset ids must have been uploaded) and
  *   `/v1/assets` (create / get / delete, in memory; MIME type checked against the supported list only).
  * - `enqueue()` scripts the next responses (status, body, headers, delay) to simulate errors and slowness.
  */

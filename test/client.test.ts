@@ -173,9 +173,9 @@ describe("configuration and auth", () => {
     expect(() => new Krun({ apiKey: KEY, maxRetries: 1.5 })).toThrow(RangeError);
   });
 
-  it("defaults to a 70 s timeout and 1 retry", () => {
+  it("defaults to a 180 s timeout and 1 retry", () => {
     const client = new Krun({ apiKey: KEY });
-    expect(client.timeout).toBe(70_000);
+    expect(client.timeout).toBe(180_000);
     expect(client.maxRetries).toBe(1);
   });
 
@@ -191,7 +191,7 @@ describe("configuration and auth", () => {
       expect(text).not.toContain(KEY);
       expect(text).not.toContain("SECRET");
     }
-    expect(String(client)).toBe('Krun(baseUrl="https://api.krun.ai", timeout=70000, maxRetries=1)');
+    expect(String(client)).toBe('Krun(baseUrl="https://api.krun.ai", timeout=180000, maxRetries=1)');
   });
 
   it("keeps the API key and request content out of errors", async () => {
@@ -715,7 +715,7 @@ describe("models", () => {
   });
 });
 
-// ------------------------------------------------------------------------------------------ Krun One V1 (upcoming)
+// ------------------------------------------------------------------------------------------------------ Krun One V1
 
 describe("text-only requests are unchanged (Krun One V1)", () => {
   it("sends the exact legacy JSON body for a string context", async () => {

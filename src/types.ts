@@ -2,7 +2,7 @@
  * Public request and response types.
  *
  * Decision primitives: `choice` (pick an option), `noul` (probability that a yes/no proposition holds), `score` (rate
- * on ordered levels) and `multi` (select every option that applies; Krun One V1, upcoming). Questions, answers and
+ * on ordered levels) and `multi` (select every option that applies; Krun One V1). Questions, answers and
  * content parts are discriminated unions on `type`.
  *
  * Question ids, option ids and level order are whatever the caller chose: they are never renamed, validated against an
@@ -61,7 +61,7 @@ export interface ScoreQuestion {
 /**
  * A `multi` question: select every option that applies; each option gets its own independent probability.
  *
- * Krun One V1 (upcoming): not yet available on api.krun.ai.
+ * Krun One V1.
  */
 export interface MultiQuestion<OptionId extends string = string> {
   type: "multi";
@@ -79,7 +79,7 @@ export type Questions = Record<string, Question>;
 
 // ------------------------------------------------------------------------------------------ content parts (V1)
 //
-// Krun One V1 (upcoming): not yet available on api.krun.ai. A context can be a list of parts instead of a string.
+// Krun One V1: a context can be a list of parts instead of a string.
 // Every modality is input only: the answer is always the structured decision.
 
 /** Kind of a content part. */
@@ -128,7 +128,7 @@ export type ContentPart = TextPart | ImagePart | DocumentPart | AudioPart;
 
 export interface DecideParams<Q extends Questions = Questions> {
   /**
-   * The text to decide on (1–8,000 characters), or (Krun One V1, upcoming) an ordered list of 1–16 content parts.
+   * The text to decide on (1–8,000 characters), or (Krun One V1) an ordered list of 1–16 content parts.
    */
   context: string | readonly ContentPart[];
   /** Question id → question (1–16). */
@@ -226,7 +226,7 @@ export interface ScoreAnswer {
   probabilities: Record<string, number>;
 }
 
-/** The answer to one `multi` question (Krun One V1, upcoming). */
+/** The answer to one `multi` question (Krun One V1). */
 export interface MultiAnswer<OptionId extends string = string> {
   type: "multi";
   /** Option ids that apply, in request order (possibly empty). */
@@ -298,7 +298,7 @@ export interface CreateAssetOptions extends RequestOptions {
   mimeType?: string;
 }
 
-/** An uploaded media file (Krun One V1, upcoming). Reference it in a content part by `id`. */
+/** An uploaded media file (Krun One V1). Reference it in a content part by `id`. */
 export interface Asset {
   /** `asset_...`: use it as `assetId` in an image / document / audio part. */
   id: string;
