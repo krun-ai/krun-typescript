@@ -3,6 +3,30 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] - Krun One V1 (upcoming — not yet available on api.krun.ai)
+
+Types and methods for the Krun One V1 multimodal API contract. The API side is **not enabled on api.krun.ai yet**;
+no version bump and no release until it is. OpenAPI snapshot refreshed (same `info.version`, `1.0.0-beta`).
+
+- `decide({ context })`: `context` is `string` (unchanged: the request body is byte-identical) **or** an array of
+  content parts, the discriminated union `ContentPart = TextPart | ImagePart | DocumentPart | AudioPart`
+  (`{ type: "text", text, id? }`, `{ type: "image" | "document" | "audio", assetId, id? }`; `assetId` is sent as
+  `asset_id`).
+- New question type **`multi`** (`{ type: "multi", options, instructions? }`) and answer `MultiAnswer`
+  (`{ type: "multi", values: string[], probabilities: Record<string, number> }`), typed by inference like `choice`.
+- `client.assets.create(data, { mimeType })` (raw `Blob` / `ArrayBuffer` / `Uint8Array` / `Buffer` body with
+  `Content-Type: mimeType`; defaults to `blob.type`), `client.assets.get(id)`, `client.assets.delete(id)`; `Asset`
+  (`id`, `object`, `mimeType`, `sizeBytes`, `sha256`, `createdAt`, `expiresAt`) and `DeletedAsset`. `create()` and
+  `delete()` are never retried; `get()` is retried like `models()`.
+- New error codes mapped to the existing classes by HTTP status (`errorCode` tells them apart):
+  `UNSUPPORTED_MODALITY`, `UNSUPPORTED_MIME_TYPE`, `ASSET_TOO_LARGE`, `TOO_MANY_IMAGES`, `TOO_MANY_DOCUMENTS`,
+  `TOO_MANY_AUDIO`, `DOCUMENT_TOO_MANY_PAGES`, `AUDIO_TOO_LONG`, `DECODE_FAILED` → `InvalidRequestError`;
+  `ASSET_NOT_FOUND`, `ASSET_EXPIRED` → `NotFoundError`; `ASSET_FORBIDDEN` → `PermissionDeniedError`; `OCR_FAILED`,
+  `ASR_FAILED`, `VISION_FAILED` → `InferenceFailedError`; `MULTIMODAL_INFERENCE_FAILED` → `InternalServerError`.
+  HTTP 410 / 415 without a code map to `NotFoundError` / `InvalidRequestError`.
+- Typing note: `Answer` gains `MultiAnswer`, so exhaustive narrowing over `answer.type` needs a `"multi"` branch.
+  Inline-typed questions are unaffected.
+
 ## [0.2.0] - Unreleased
 
 Decision primitives (OpenAPI snapshot refreshed). 0.1.0 was never published to npm; 0.2.0 keeps the version in step

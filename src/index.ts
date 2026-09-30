@@ -4,7 +4,7 @@
  * @packageDocumentation
  */
 
-export { Krun, type KrunOptions } from "./client.js";
+export { Assets, Krun, type KrunOptions } from "./client.js";
 export {
   API_VERSION,
   DEFAULT_BASE_URL,
@@ -38,15 +38,26 @@ export type {
   Answer,
   AnswerFor,
   Answers,
+  Asset,
+  AssetData,
+  AudioPart,
   ChoiceAnswer,
   ChoiceQuestion,
+  ContentPart,
+  ContentPartType,
+  CreateAssetOptions,
   DecideOptions,
   DecideParams,
   DecisionResult,
+  DeletedAsset,
+  DocumentPart,
   ExpectedAnswer,
   Feedback,
   FeedbackParams,
+  ImagePart,
   Model,
+  MultiAnswer,
+  MultiQuestion,
   NoulAnswer,
   NoulCriteria,
   NoulQuestion,
@@ -57,6 +68,7 @@ export type {
   ScoreAnswer,
   ScoreQuestion,
   TaskType,
+  TextPart,
   Usage,
 } from "./types.js";
 export { VERSION } from "./version.js";

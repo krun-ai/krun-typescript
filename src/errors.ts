@@ -3,18 +3,24 @@
  *
  *     KrunError
  *     ├── APIError                    the API answered with an error status
- *     │   ├── InvalidRequestError     400/413  INVALID_REQUEST, INVALID_OPTIONS, PAYLOAD_TOO_LARGE
+ *     │   ├── InvalidRequestError     400/413/415/422  INVALID_REQUEST, INVALID_OPTIONS, PAYLOAD_TOO_LARGE,
+ *     │   │                                    UNSUPPORTED_MODALITY, UNSUPPORTED_MIME_TYPE, ASSET_TOO_LARGE,
+ *     │   │                                    TOO_MANY_IMAGES, TOO_MANY_DOCUMENTS, TOO_MANY_AUDIO,
+ *     │   │                                    DOCUMENT_TOO_MANY_PAGES, AUDIO_TOO_LONG, DECODE_FAILED
  *     │   ├── AuthenticationError     401      UNAUTHORIZED
  *     │   ├── InsufficientCreditsError 402     INSUFFICIENT_CREDITS
- *     │   ├── PermissionDeniedError   403      FORBIDDEN, SIGNUP_RESTRICTED
- *     │   ├── NotFoundError           404      NOT_FOUND
+ *     │   ├── PermissionDeniedError   403      FORBIDDEN, SIGNUP_RESTRICTED, ASSET_FORBIDDEN
+ *     │   ├── NotFoundError           404/410  NOT_FOUND, ASSET_NOT_FOUND, ASSET_EXPIRED
  *     │   ├── ConflictError           409      CONFLICT
  *     │   ├── RateLimitError          429      RATE_LIMITED
  *     │   ├── QuotaExceededError      429      QUOTA_EXCEEDED
- *     │   ├── InferenceFailedError    502      INFERENCE_FAILED
+ *     │   ├── InferenceFailedError    502      INFERENCE_FAILED, OCR_FAILED, ASR_FAILED, VISION_FAILED
  *     │   ├── ServiceUnavailableError 503      UPSTREAM_UNAVAILABLE
  *     │   ├── UpstreamTimeoutError    504      UPSTREAM_TIMEOUT
- *     │   └── InternalServerError     500      INTERNAL_ERROR
+ *     │   └── InternalServerError     500      INTERNAL_ERROR, MULTIMODAL_INFERENCE_FAILED
+ *
+ * The multimodal codes (Krun One V1, upcoming) reuse the classes of their HTTP status; tell them apart with
+ * `error.errorCode` (e.g. `ASSET_EXPIRED`).
  *     ├── APIConnectionError          no HTTP response (DNS, refused, reset, TLS, ...)
  *     │   └── APITimeoutError         the SDK timeout elapsed
  *     └── APIResponseValidationError  a 2xx response did not match the contract
@@ -73,11 +79,14 @@ export class APIError extends KrunError {
   }
 }
 
-/** The request was rejected before any inference (bad fields, 1 option, too many questions, body too big). */
+/**
+ * The request was rejected before any inference (bad fields, 1 option, too many questions, body too big, unsupported
+ * modality or MIME type, too many media parts, a file that cannot be decoded, ...).
+ */
 export class InvalidRequestError extends APIError {}
 /** Missing, invalid or revoked API key. */
 export class AuthenticationError extends APIError {}
-/** Unknown resource, e.g. feedback for a `requestId` this project never decided. */
+/** Unknown resource, e.g. feedback for a `requestId` this project never decided, or an unknown / expired asset. */
 export class NotFoundError extends APIError {}
 /** The organization has no credits left (402). Retrying will not help until credits are added. */
 export class InsufficientCreditsError extends APIError {}
@@ -89,7 +98,7 @@ export class ConflictError extends APIError {}
 export class RateLimitError extends APIError {}
 /** The project's monthly decision or input-token quota is exhausted. Retrying will not help. */
 export class QuotaExceededError extends APIError {}
-/** The model backend failed to produce a valid answer. */
+/** The model backend (or, for media, OCR / speech recognition / vision) failed to produce a valid answer. */
 export class InferenceFailedError extends APIError {}
 /** The model backend is temporarily unavailable. */
 export class ServiceUnavailableError extends APIError {}
@@ -124,6 +133,23 @@ export const CODE_TO_CLASS: Record<ErrorCode, APIErrorClass> = {
   UPSTREAM_UNAVAILABLE: ServiceUnavailableError,
   UPSTREAM_TIMEOUT: UpstreamTimeoutError,
   INTERNAL_ERROR: InternalServerError,
+  // Krun One V1 multimodal (upcoming), mapped by HTTP status.
+  UNSUPPORTED_MODALITY: InvalidRequestError, // 400
+  UNSUPPORTED_MIME_TYPE: InvalidRequestError, // 415
+  ASSET_NOT_FOUND: NotFoundError, // 404
+  ASSET_FORBIDDEN: PermissionDeniedError, // 403
+  ASSET_EXPIRED: NotFoundError, // 410
+  ASSET_TOO_LARGE: InvalidRequestError, // 413
+  TOO_MANY_IMAGES: InvalidRequestError, // 400
+  TOO_MANY_DOCUMENTS: InvalidRequestError, // 400
+  TOO_MANY_AUDIO: InvalidRequestError, // 400
+  DOCUMENT_TOO_MANY_PAGES: InvalidRequestError, // 400
+  AUDIO_TOO_LONG: InvalidRequestError, // 400
+  DECODE_FAILED: InvalidRequestError, // 422
+  OCR_FAILED: InferenceFailedError, // 502
+  ASR_FAILED: InferenceFailedError, // 502
+  VISION_FAILED: InferenceFailedError, // 502
+  MULTIMODAL_INFERENCE_FAILED: InternalServerError, // 500
 };
 
 // Used when the body has no (known) code, e.g. an error page from a proxy in front of the API.
@@ -134,7 +160,9 @@ const STATUS_TO_CLASS: Record<number, APIErrorClass> = {
   403: PermissionDeniedError,
   404: NotFoundError,
   409: ConflictError,
+  410: NotFoundError,
   413: InvalidRequestError,
+  415: InvalidRequestError,
   422: InvalidRequestError,
   429: RateLimitError,
   500: InternalServerError,

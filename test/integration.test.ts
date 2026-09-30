@@ -8,6 +8,7 @@ import {
   AuthenticationError,
   InvalidRequestError,
   Krun,
+  NotFoundError,
   ServiceUnavailableError,
 } from "../src/index.js";
 import { MockKrunAPI } from "./mock-server.js";
@@ -156,5 +157,50 @@ describe("against the mock API", () => {
     const err = (await dead.models().catch((e: unknown) => e)) as APIConnectionError;
     expect(err).toBeInstanceOf(APIConnectionError);
     expect(err.message).not.toContain(KEY);
+  });
+
+  it("uploads an asset, decides on content parts with a multi question, then deletes it (Krun One V1)", async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const asset = await client.assets.create(png, { mimeType: "image/png" });
+    expect(asset.id).toMatch(/^asset_/);
+    expect(asset.mimeType).toBe("image/png");
+    expect(asset.sizeBytes).toBe(8);
+    expect(asset.sha256).toBe("4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6");
+    expect(asset.expiresAt.getTime() - asset.createdAt.getTime()).toBe(86_400_000);
+    expect(api.requests[0]?.headers["content-type"]).toBe("image/png");
+    expect(api.requests[0]?.bytes.equals(png)).toBe(true);
+    expect(await client.assets.get(asset.id)).toEqual(asset);
+
+    const result = await client.decide({
+      context: [
+        { type: "text", text: "Which elements are present?" },
+        { type: "image", assetId: asset.id, id: "photo" },
+      ],
+      questions: {
+        tags: { type: "multi", options: { logo: null, signature: "", stamp: "Official stamp" } },
+        paid: { type: "noul", instructions: "Is it paid?" },
+      },
+    });
+    expect(result.answers.tags.values).toEqual(["logo"]);
+    expect(Object.keys(result.answers.tags.probabilities)).toEqual(["logo", "signature", "stamp"]);
+    expect(result.answers.paid.noul).toBeGreaterThan(0.5);
+
+    expect(await client.assets.delete(asset.id)).toEqual({ id: asset.id, object: "asset", deleted: true });
+    const err = (await client.assets.get(asset.id).catch((e: unknown) => e)) as NotFoundError;
+    expect(err).toBeInstanceOf(NotFoundError);
+    expect(err.errorCode).toBe("ASSET_NOT_FOUND");
+  });
+
+  it("rejects an unsupported MIME type and an invalid content part (Krun One V1)", async () => {
+    const mime = (await client.assets
+      .create(new Uint8Array([1, 2]), { mimeType: "video/mp4" })
+      .catch((e: unknown) => e)) as InvalidRequestError;
+    expect(mime).toBeInstanceOf(InvalidRequestError);
+    expect(mime.statusCode).toBe(415);
+    expect(mime.errorCode).toBe("UNSUPPORTED_MIME_TYPE");
+    // Not a valid asset id pattern: rejected by the OpenAPI schema.
+    await expect(
+      client.decide({ context: [{ type: "image", assetId: "nope" }], questions: { p: QUESTIONS.priority } }),
+    ).rejects.toBeInstanceOf(InvalidRequestError);
   });
 });

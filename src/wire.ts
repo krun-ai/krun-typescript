@@ -11,12 +11,16 @@ import type { components } from "./generated/openapi.js";
 import type {
   AbstentionStatus,
   Answer,
+  Asset,
   ChoiceAnswer,
+  ContentPart,
   DecideParams,
   DecisionResult,
+  DeletedAsset,
   Feedback,
   FeedbackParams,
   Model,
+  MultiAnswer,
   NoulAnswer,
   Question,
   Questions,
@@ -26,6 +30,7 @@ import type {
 type Schemas = components["schemas"];
 export type WireDecideRequest = Schemas["DecideRequest"];
 export type WireQuestion = Schemas["Question"];
+export type WireContentPart = Schemas["ContentPart"];
 export type WireFeedbackRequest = Omit<Schemas["FeedbackRequest"], "metadata"> & {
   metadata?: Record<string, unknown> | null;
 };
@@ -47,10 +52,35 @@ function questionToWire(id: string, question: Question): WireQuestion {
   return wire;
 }
 
+const PART_TYPES = new Set(["text", "image", "document", "audio"]);
+
+function partToWire(index: number, part: ContentPart): WireContentPart {
+  const where = `context[${index}]`;
+  if (!isPlainObject(part) || typeof part.type !== "string") {
+    throw new TypeError(`${where} must be a content part like { type: "text", text } or { type: "image", assetId }`);
+  }
+  const { assetId, ...rest } = part as ContentPart & { assetId?: unknown; asset_id?: unknown };
+  const wire = { ...rest } as WireContentPart & Record<string, unknown>;
+  if (part.type !== "text" && PART_TYPES.has(part.type) && (typeof assetId !== "string" || assetId === "")) {
+    const hint = "asset_id" in rest ? " (the SDK field is `assetId`)" : "";
+    throw new TypeError(`${where}.assetId must be the id of an uploaded asset${hint}`);
+  }
+  if (assetId !== undefined) wire.asset_id = assetId;
+  // Other types (e.g. "video") and extra fields are sent as is: the API rejects them with a precise error code.
+  return wire;
+}
+
+function contextToWire(context: unknown): WireDecideRequest["context"] {
+  // A string is sent untouched, so text-only requests are byte-identical to earlier SDK versions.
+  if (typeof context === "string") return context;
+  if (Array.isArray(context)) return context.map((part, i) => partToWire(i, part as ContentPart));
+  throw new TypeError(`context must be a string or an array of content parts, got ${typeof context}`);
+}
+
 export function decideBody(params: DecideParams): WireDecideRequest {
   if (!isPlainObject(params)) throw new TypeError("decide() expects { context, questions }");
-  const { context, questions, model } = params;
-  if (typeof context !== "string") throw new TypeError(`context must be a string, got ${typeof context}`);
+  const { questions, model } = params;
+  const context = contextToWire(params.context);
   if (!isPlainObject(questions)) {
     throw new TypeError("questions must be an object of question id -> question");
   }
@@ -151,11 +181,21 @@ function scoreAnswer(data: Record<string, unknown>, where: string): ScoreAnswer 
   };
 }
 
+function multiAnswer(data: Record<string, unknown>, where: string): MultiAnswer {
+  if (!Array.isArray(data.values)) throw fail(`${where}.values is not a list`);
+  const values = data.values.map((v, i) => {
+    if (typeof v !== "string") throw fail(`${where}.values[${i}] is not a string`);
+    return v;
+  });
+  return { type: "multi", values, probabilities: numberMap(data.probabilities, `${where}.probabilities`) };
+}
+
 // Answer parsers by `type`. A type this SDK does not know throws APIResponseValidationError ("please upgrade").
 const ANSWER_PARSERS: Record<Schemas["Answer"]["type"], (data: Record<string, unknown>, where: string) => Answer> = {
   choice: choiceAnswer,
   noul: noulAnswer,
   score: scoreAnswer,
+  multi: multiAnswer,
 };
 
 export const SUPPORTED_ANSWER_TYPES: readonly string[] = Object.keys(ANSWER_PARSERS);
@@ -186,11 +226,16 @@ export function parseDecision<Q extends Questions>(data: unknown, requestId: str
   };
 }
 
+function date(o: Record<string, unknown>, key: string, where: string): Date {
+  const raw = str(o, key, where);
+  const value = new Date(raw);
+  if (Number.isNaN(value.getTime())) throw fail(`${key} ${JSON.stringify(raw)} is not a timestamp`);
+  return value;
+}
+
 export function parseFeedback(data: unknown): Feedback {
   const body = obj(data, "body");
-  const createdAtRaw = str(body, "created_at", "body");
-  const createdAt = new Date(createdAtRaw);
-  if (Number.isNaN(createdAt.getTime())) throw fail(`created_at ${JSON.stringify(createdAtRaw)} is not a timestamp`);
+  const createdAt = date(body, "created_at", "body");
   return {
     id: str(body, "id", "body"),
     object: str(body, "object", "body"),
@@ -211,4 +256,27 @@ export function parseModels(data: unknown): Model[] {
       status: str(m, "status", `data[${i}]`),
     };
   });
+}
+
+export function parseAsset(data: unknown): Asset {
+  const body = obj(data, "body");
+  const sizeBytes = body.size_bytes;
+  if (typeof sizeBytes !== "number" || !Number.isInteger(sizeBytes) || sizeBytes < 0) {
+    throw fail("body.size_bytes is not a non-negative integer");
+  }
+  return {
+    id: str(body, "id", "body"),
+    object: str(body, "object", "body"),
+    mimeType: str(body, "mime_type", "body"),
+    sizeBytes,
+    sha256: str(body, "sha256", "body"),
+    createdAt: date(body, "created_at", "body"),
+    expiresAt: date(body, "expires_at", "body"),
+  };
+}
+
+export function parseDeletedAsset(data: unknown): DeletedAsset {
+  const body = obj(data, "body");
+  if (typeof body.deleted !== "boolean") throw fail("body.deleted is not a boolean");
+  return { id: str(body, "id", "body"), object: str(body, "object", "body"), deleted: body.deleted };
 }

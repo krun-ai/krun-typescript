@@ -41,6 +41,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload a media file for use in decision contexts. Krun One V1 (upcoming): not yet enabled on api.krun.ai.
+         * @description The request body is the file; `Content-Type` is its MIME type (checked against the content).
+         */
+        post: operations["create_asset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets/{asset_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Asset metadata. Krun One V1 (upcoming): not yet enabled on api.krun.ai. */
+        get: operations["get_asset"];
+        put?: never;
+        post?: never;
+        /** Delete an asset. Krun One V1 (upcoming): not yet enabled on api.krun.ai. */
+        delete: operations["delete_asset"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/decide": {
         parameters: {
             query?: never;
@@ -96,7 +134,37 @@ export interface components {
         /** @enum {string} */
         AbstentionStatus: "calibrated" | "advisory";
         /** @description An answer, discriminated by `type` (same type as its question). */
-        Answer: components["schemas"]["ChoiceAnswer"] | components["schemas"]["NoulAnswer"] | components["schemas"]["ScoreAnswer"];
+        Answer: components["schemas"]["ChoiceAnswer"] | components["schemas"]["NoulAnswer"] | components["schemas"]["ScoreAnswer"] | components["schemas"]["MultiAnswer"];
+        /** @description Krun One V1 (upcoming): not yet enabled on api.krun.ai. */
+        Asset: {
+            /** @description Id of an asset uploaded with `POST /v1/assets` by the same project. */
+            id: string;
+            /** @enum {string} */
+            object: "asset";
+            mime_type: string;
+            /** Format: int64 */
+            size_bytes: number;
+            sha256: string;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description After this time the asset can no longer be referenced (default 24 h after upload).
+             */
+            expires_at: string;
+        };
+        /** @description WAV / MP3 / FLAC / OGG, max 10 MB and 30 s (20 s recommended: longer speech may be transcribed only partially); 1 per request. Krun One V1 (upcoming): not yet enabled on api.krun.ai. */
+        AudioPart: {
+            /** @description Optional caller-chosen id of the part (echoed only in errors). */
+            id?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "audio";
+            /** @description Id of an asset uploaded with `POST /v1/assets` by the same project. */
+            asset_id: string;
+        };
         /** @description Answer to a `choice` question. */
         ChoiceAnswer: {
             /**
@@ -139,9 +207,11 @@ export interface components {
             };
             task_type?: components["schemas"]["TaskType"] | null;
         };
+        /** @description One piece of evidence (input only). Krun One V1 (upcoming): not yet enabled on api.krun.ai. */
+        ContentPart: components["schemas"]["TextPart"] | components["schemas"]["ImagePart"] | components["schemas"]["DocumentPart"] | components["schemas"]["AudioPart"];
         DecideRequest: {
-            /** @description The text to decide on (1–8,000 characters). */
-            context: string;
+            /** @description The text to decide on (1–8,000 characters), or an ordered list of 1–16 content parts; text parts are joined with newlines. Media parts (image, document, audio) reference uploaded assets. Every modality is input only: the answer is always the structured decision. Video is not supported. (Content parts: Krun One V1 (upcoming): not yet enabled on api.krun.ai.) */
+            context: string | components["schemas"]["ContentPart"][];
             /**
              * @description Question id → question (1–16). Question ids (1–100 characters) are returned as keys of `answers`. Questions of
              *     different types can be mixed in one request.
@@ -161,11 +231,23 @@ export interface components {
             };
             usage: components["schemas"]["Usage"];
         };
+        /** @description PDF / DOCX / plain text / Markdown / HTML (max 25 MB, 20 pages), or a page image; up to 2 per request. Documents with a text layer are read as text; scans go through OCR + vision. Krun One V1 (upcoming): not yet enabled on api.krun.ai. */
+        DocumentPart: {
+            /** @description Optional caller-chosen id of the part (echoed only in errors). */
+            id?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "document";
+            /** @description Id of an asset uploaded with `POST /v1/assets` by the same project. */
+            asset_id: string;
+        };
         ErrorBody: {
             error: components["schemas"]["ErrorDetail"];
         };
         /** @enum {string} */
-        ErrorCode: "INVALID_REQUEST" | "INVALID_OPTIONS" | "PAYLOAD_TOO_LARGE" | "UNAUTHORIZED" | "FORBIDDEN" | "SIGNUP_RESTRICTED" | "NOT_FOUND" | "CONFLICT" | "INSUFFICIENT_CREDITS" | "RATE_LIMITED" | "QUOTA_EXCEEDED" | "UPSTREAM_TIMEOUT" | "UPSTREAM_UNAVAILABLE" | "INFERENCE_FAILED" | "INTERNAL_ERROR";
+        ErrorCode: "INVALID_REQUEST" | "INVALID_OPTIONS" | "PAYLOAD_TOO_LARGE" | "UNAUTHORIZED" | "FORBIDDEN" | "SIGNUP_RESTRICTED" | "NOT_FOUND" | "CONFLICT" | "INSUFFICIENT_CREDITS" | "RATE_LIMITED" | "QUOTA_EXCEEDED" | "UPSTREAM_TIMEOUT" | "UPSTREAM_UNAVAILABLE" | "INFERENCE_FAILED" | "INTERNAL_ERROR" | "UNSUPPORTED_MODALITY" | "UNSUPPORTED_MIME_TYPE" | "ASSET_NOT_FOUND" | "ASSET_FORBIDDEN" | "ASSET_EXPIRED" | "ASSET_TOO_LARGE" | "TOO_MANY_IMAGES" | "TOO_MANY_DOCUMENTS" | "TOO_MANY_AUDIO" | "DOCUMENT_TOO_MANY_PAGES" | "AUDIO_TOO_LONG" | "DECODE_FAILED" | "OCR_FAILED" | "ASR_FAILED" | "VISION_FAILED" | "MULTIMODAL_INFERENCE_FAILED";
         ErrorDetail: {
             /** @description Stable machine-readable code. */
             code: components["schemas"]["ErrorCode"];
@@ -237,6 +319,18 @@ export interface components {
             status: string;
             database?: string | null;
         };
+        /** @description PNG / JPEG / WebP, max 10 MB; up to 4 images per request. Krun One V1 (upcoming): not yet enabled on api.krun.ai. */
+        ImagePart: {
+            /** @description Optional caller-chosen id of the part (echoed only in errors). */
+            id?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "image";
+            /** @description Id of an asset uploaded with `POST /v1/assets` by the same project. */
+            asset_id: string;
+        };
         Model: {
             /** @example krun-one-v0 */
             id: string;
@@ -249,6 +343,34 @@ export interface components {
             /** @description Always `list`. */
             object: string;
             data: components["schemas"]["Model"][];
+        };
+        /** @description Answer to a `multi` question (Krun One V1). */
+        MultiAnswer: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "multi";
+            /** @description Option ids that apply, in request order (possibly empty). */
+            values: string[];
+            /** @description Probability that each option applies (independent, not a distribution), in request order. */
+            probabilities: {
+                [key: string]: number;
+            };
+        };
+        /** @description Select every option that applies (Krun One V1): each option gets its own probability. */
+        MultiQuestion: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "multi";
+            /** @description Option id → description (2–64 options). Use `""` (or `null`) for label-only options. */
+            options: {
+                [key: string]: string | null;
+            };
+            /** @description Optional instruction (1–1,000 characters), e.g. "Select every element present in the document". */
+            instructions?: string | null;
         };
         /** @description Answer to a `noul` question. */
         NoulAnswer: {
@@ -285,7 +407,7 @@ export interface components {
             criteria?: components["schemas"]["NoulCriteria"] | null;
         };
         /** @description A question, discriminated by `type`. */
-        Question: components["schemas"]["ChoiceQuestion"] | components["schemas"]["NoulQuestion"] | components["schemas"]["ScoreQuestion"];
+        Question: components["schemas"]["ChoiceQuestion"] | components["schemas"]["NoulQuestion"] | components["schemas"]["ScoreQuestion"] | components["schemas"]["MultiQuestion"];
         /** @description Answer to a `score` question. */
         ScoreAnswer: {
             /**
@@ -330,6 +452,16 @@ export interface components {
         };
         /** @enum {string} */
         TaskType: "intent" | "tool";
+        TextPart: {
+            /** @description Optional caller-chosen id of the part (echoed only in errors). */
+            id?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "text";
+            text: string;
+        };
         Usage: {
             /**
              * Format: int64
@@ -356,6 +488,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description The process is up. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -375,6 +508,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Ready to serve. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -383,12 +517,171 @@ export interface operations {
                     "application/json": components["schemas"]["HealthStatus"];
                 };
             };
+            /** @description Not ready (a dependency is unavailable). */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["HealthStatus"];
+                };
+            };
+        };
+    };
+    create_asset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/pdf": string;
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": string;
+                "audio/flac": string;
+                "audio/mpeg": string;
+                "audio/ogg": string;
+                "audio/wav": string;
+                "image/jpeg": string;
+                "image/png": string;
+                "image/webp": string;
+                "text/html": string;
+                "text/markdown": string;
+                "text/plain": string;
+            };
+        };
+        responses: {
+            /** @description Asset created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description ASSET_TOO_LARGE */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description UNSUPPORTED_MIME_TYPE (type not supported, or the content does not match it). */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Rate limited. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_asset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The asset. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
+            /** @description ASSET_FORBIDDEN (another project). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description ASSET_NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_asset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description ASSET_FORBIDDEN (another project). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description ASSET_NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };
